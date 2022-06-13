@@ -10,6 +10,7 @@ import webapp.marslander.{Coord, SurfaceModel}
 // https://outwatch.github.io/docs/readme.html
 
 object Main {
+
   def main(args: Array[String]): Unit =
     Outwatch.renderInto[SyncIO]("#app", app).unsafeRunSync()
 
