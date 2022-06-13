@@ -4,7 +4,7 @@ import cats.effect.SyncIO
 import colibri.Subject
 import outwatch._
 import outwatch.dsl._
-import webapp.marslander.SurfaceModel
+import webapp.marslander.{Coord, SurfaceModel}
 
 // Outwatch documentation:
 // https://outwatch.github.io/docs/readme.html
@@ -33,11 +33,48 @@ object Main {
       levelDisplay,
     )
   }
-  def renderLevel(model: SurfaceModel): VModifier =
+  def renderLevel(level: SurfaceModel): VModifier =
     div(
-      h1(s"Level ${model.name}"),
-      pre(model.toInputLines.mkString("\n")),
+      h1(s"Level ${level.name}"),
+      renderLevelGraphic(level),
+      h2("Game Input"),
+      pre(level.toInputLines.mkString("\n")),
     )
+
+  def renderLevelGraphic(level: SurfaceModel) = {
+    import svg._
+    val allCoords =
+      Coord(0, 0) :: level.initialState.surfaceCoords ::: List(Coord(7000, 0))
+    val pts       = allCoords.map { case Coord(x, y) => s"$x, $y" }.mkString(" ")
+    svg(
+      width     := "1400",
+      height    := "600",
+      viewBox   := "0 0 7000 3000",
+      transform := "scale(1,-1)",
+      rect(
+        x           := "0",
+        y           := "0",
+        width       := "7000",
+        height      := "3000",
+        fill        := "hsla(200,10%,80%,0.9)",
+      ),
+      polyline(
+        points      := pts,
+        fill        := "red",
+        stroke      := "black",
+        strokeWidth := "3",
+      ),
+//    line(
+//      stroke := "green",
+//      strokeWidth := "20",
+//      x1 := start.x,
+//      y1 := start.y,
+//      x2 := end.x,
+//      y2 := end.y
+//    ),
+    )
+
+  }
 
   def counter = SyncIO {
     // https://outwatch.github.io/docs/readme.html#example-counter
