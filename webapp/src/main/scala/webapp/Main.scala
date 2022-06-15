@@ -1,7 +1,7 @@
 package webapp
 
 import cats.effect.SyncIO
-import colibri.Subject
+import colibri.{BehaviorSubject, Subject}
 import outwatch._
 import outwatch.dsl._
 import webapp.marslander.{Coord, SurfaceModel}
@@ -19,7 +19,7 @@ object Main {
       Communication.getLevels.map(renderUi),
     )
 
-  def renderUi(allLevels: List[SurfaceModel])     = {
+  def renderUi(allLevels: List[SurfaceModel]) = {
     val selectedLevel  = Subject.behavior(allLevels.headOption)
     val levelSelection = div(allLevels.map { level =>
       button(s"level ${level.name}", onClick.as(Some(level)) --> selectedLevel)
@@ -34,24 +34,93 @@ object Main {
       levelDisplay,
     )
   }
-  def renderLevel(level: SurfaceModel): VModifier =
+
+  case class LanderSettings(x: Int, y: Int, rotation: Int)
+  def landerSettings(state: BehaviorSubject[LanderSettings]) =
+    state.map { s =>
+      div(
+        display.flex,
+        flexDirection.column,
+        label(
+          "x",
+          input(
+            tpe     := "range",
+            minAttr := "0",
+            maxAttr := "7000",
+            value   := s.x.toString,
+            cls     := "range",
+            onInput.value.map(v => s.copy(x = v.toInt)) --> state,
+          ),
+        ),
+        label(
+          "y",
+          input(
+            tpe     := "range",
+            minAttr := "0",
+            maxAttr := "3000",
+            value   := s.y.toString,
+            cls     := "range",
+            onInput.value.map(v => s.copy(y = v.toInt)) --> state,
+          ),
+        ),
+        label(
+          "rotation",
+          input(
+            tpe     := "range",
+            minAttr := "-90",
+            maxAttr := "90",
+            value   := s.rotation.toString,
+            cls     := "range",
+            onInput.value.map(v => s.copy(rotation = v.toInt)) --> state,
+          ),
+        ),
+      )
+    }
+
+  def renderLevel(level: SurfaceModel): VModifier = {
+    val landerState = Subject.behavior(LanderSettings(100, 100, 0))
+
     div(
       h1(s"Level ${level.name}"),
-      renderLevelGraphic(level),
+      landerSettings(landerState),
+      landerState.map { s =>
+        div(
+          pre(s"(${s.x}, ${s.y}) @ ${s.rotation}°"),
+          renderLevelGraphic(level, Coord(s.x, s.y), s.rotation),
+        )
+      },
       h2("Game Input"),
       pre(level.toInputLines.mkString("\n")),
     )
+  }
 
-  def renderLevelGraphic(level: SurfaceModel) = {
+  def toDisplayCoord(coord: Coord): Coord =
+    Coord(coord.x, 3000 - coord.y)
+
+  def renderLevelGraphic(level: SurfaceModel, landerCoords: Coord, landerRotation: Int) = {
     import svg._
     val allCoords =
       Coord(0, 0) :: level.initialState.surfaceCoords ::: List(Coord(7000, 0))
-    val pts       = allCoords.map { case Coord(x, y) => s"$x, $y" }.mkString(" ")
+
+    val displayCoords = allCoords.map(toDisplayCoord)
+    val pts           = displayCoords.map { case Coord(x, y) => s"$x, $y" }.mkString(" ")
+
+    val landerWidth  = 335.6
+    val landerHeight = 308.7
+
+    val landerScaleFactor = 0.75
+
+    val landerDisplayW = landerWidth * landerScaleFactor
+    val landerDisplayH = landerHeight * landerScaleFactor
+
+    val landerDisplayCoords = toDisplayCoord(landerCoords)
+    val landerX: Int        = landerDisplayCoords.x - (landerDisplayW / 2).toInt
+    val landerY: Int        = landerDisplayCoords.y - landerDisplayH.toInt
+
     svg(
-      width     := "1400",
-      height    := "600",
-      viewBox   := "0 0 7000 3000",
-      transform := "scale(1,-1)",
+      width   := "1400",
+      height  := "600",
+      viewBox := "0 0 7000 3000",
       rect(
         x           := "0",
         y           := "0",
@@ -64,6 +133,22 @@ object Main {
         fill        := "red",
         stroke      := "black",
         strokeWidth := "3",
+      ),
+      g(
+        transform   := s"translate($landerX, $landerY)",
+        g(
+          image(
+//          <image x="10" y="20" width="80" height="80" href="recursion.svg" />
+            // w: 335,6
+            // h: 308,7
+            href      := s"${Communication.assetLocation}/Lander.svg",
+            width     := landerDisplayW.toString,
+            height    := landerDisplayH.toString,
+//            VModifier.attr("transform-box")    := s"fill-box",
+//            VModifier.attr("transform-origin") := s"center",
+            transform := s"rotate($landerRotation, ${landerDisplayW / 2}, ${landerDisplayH / 2})",
+          ),
+        ),
       ),
 //    line(
 //      stroke := "green",

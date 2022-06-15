@@ -23,3 +23,7 @@ Webpack dev server will stop automatically when you stop the `dev` task
 
 If you existed ungracefully and your webpack dev server is still open (check with `ps -aef | grep -v grep | grep webpack`),
 you can close it by running `fastOptJS::stopWebpackDevServer` in sbt.
+
+## Deployed version
+
+[github pages](https://flwi.de/codingame/marslander)
