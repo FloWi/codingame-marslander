@@ -2,6 +2,7 @@ package webapp
 
 import cats.effect.SyncIO
 import colibri.{BehaviorSubject, Subject}
+import org.scalajs.dom.KeyCode
 import outwatch._
 import outwatch.dsl._
 import webapp.marslander.{Coord, Level}
@@ -90,6 +91,9 @@ object Main {
       ),
     )
 
+    val landerControl =
+      Subject.behavior(MouseControlState(level.landerInitialState.rotate, level.landerInitialState.power))
+
     div(
       h1(s"Level ${level.name}"),
       landerSettings(landerState),
@@ -102,6 +106,7 @@ object Main {
           renderLevelGraphic(level, s),
         )
       },
+      renderControlPanel(landerControl),
       h2("Game Input"),
       pre(level.toInputLines.mkString("\n")),
     )
@@ -109,6 +114,62 @@ object Main {
 
   def toDisplayCoord(coord: Coord): Coord =
     Coord(coord.x, 3000 - coord.y)
+
+  case class MouseControlState(angle: Int, thrust: Int)
+
+  def renderControlPanel(controlState: BehaviorSubject[MouseControlState]) = {
+    import svg._
+
+    sealed trait PowerCtrl
+    case class Set(thrust: Int) extends PowerCtrl
+    case object Increase        extends PowerCtrl
+    case object Decrease        extends PowerCtrl
+
+    val onNumber = onKeyDown.map { e =>
+      if (e.key == "+") Some(Increase)
+      else if (e.key == "-") Some(Decrease)
+      else
+        e.keyCode match {
+          case KeyCode.Num0 => Some(Set(0))
+          case KeyCode.Num1 => Some(Set(1))
+          case KeyCode.Num2 => Some(Set(2))
+          case KeyCode.Num3 => Some(Set(3))
+          case KeyCode.Num4 => Some(Set(4))
+          case _            => None
+        }
+    }
+
+    controlState.map { s =>
+      div(
+        onNumber.map {
+          case Some(Set(value))               => s.copy(thrust = value)
+          case Some(Increase) if s.thrust < 4 => s.copy(thrust = s.thrust + 1)
+          case Some(Decrease) if s.thrust > 0 => s.copy(thrust = s.thrust - 1)
+          case _                              => s
+        } --> controlState,
+        label(
+          "rotation",
+          input(
+            tpe     := "range",
+            minAttr := "-90",
+            maxAttr := "90",
+            value   := s.angle.toString,
+            cls     := "range",
+            onInput.value.map(v => s.copy(angle = v.toInt)) --> controlState,
+          ),
+        ),
+        pre(
+          s"""x: ${s.angle}
+             |thrust: ${s.thrust}""".stripMargin,
+        ),
+        svg(
+          width  := "400",
+          height := "100",
+          fill   := "lightgrey",
+        ),
+      )
+    }
+  }
 
   def displaySpeedIndicator(landerSettings: LanderSettings) = {
 
