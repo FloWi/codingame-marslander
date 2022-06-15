@@ -5,6 +5,7 @@ import colibri.{BehaviorSubject, Subject}
 import outwatch._
 import outwatch.dsl._
 import webapp.marslander.{Coord, Level}
+import webapp.vectory.Vec2
 
 // Outwatch documentation:
 // https://outwatch.github.io/docs/readme.html
@@ -35,7 +36,7 @@ object Main {
     )
   }
 
-  case class LanderSettings(x: Int, y: Int, rotation: Int)
+  case class LanderSettings(x: Int, y: Int, rotation: Int, vH: Int, vV: Int)
   def landerSettings(state: BehaviorSubject[LanderSettings]) =
     state.map { s =>
       div(
@@ -80,7 +81,13 @@ object Main {
   def renderLevel(level: Level): VModifier = {
 
     val landerState = Subject.behavior(
-      LanderSettings(level.landerInitialState.x, level.landerInitialState.y, level.landerInitialState.rotate),
+      LanderSettings(
+        level.landerInitialState.x,
+        level.landerInitialState.y,
+        level.landerInitialState.rotate,
+        level.landerInitialState.hSpeed,
+        level.landerInitialState.vSpeed,
+      ),
     )
 
     div(
@@ -88,8 +95,11 @@ object Main {
       landerSettings(landerState),
       landerState.map { s =>
         div(
-          pre(s"(${s.x}, ${s.y}) @ ${s.rotation}°"),
-          renderLevelGraphic(level, Coord(s.x, s.y), s.rotation),
+          pre(s"""(${s.x}, ${s.y}) @ ${s.rotation}°
+               |vH: ${s.vH}
+               |vV: ${s.vV}
+               |""".stripMargin),
+          renderLevelGraphic(level, s),
         )
       },
       h2("Game Input"),
@@ -100,7 +110,45 @@ object Main {
   def toDisplayCoord(coord: Coord): Coord =
     Coord(coord.x, 3000 - coord.y)
 
-  def renderLevelGraphic(level: Level, landerCoords: Coord, landerRotation: Int) = {
+  def displaySpeedIndicator(landerSettings: LanderSettings) = {
+
+    val v               = Vec2(landerSettings.vH, landerSettings.vV)
+    val l               = v.length
+    val max             = 400
+    val maxLength       = max.toString
+    val centerIndicator = Vec2(max, max)
+    val end             = centerIndicator + v
+
+    import svg._
+    svg(
+      // circle(cx := maxLength, cy := maxLength, r := maxLength, fill := "none", stroke := "black", strokeWidth := "5"),
+      circle(cx := maxLength, cy := maxLength, r := "20", fill := "black"),
+      defs(
+        marker(
+          idAttr       := "arrowhead",
+          markerWidth  := "10",
+          markerHeight := "7",
+          refX         := "0",
+          refY         := "3.5",
+          orient       := "auto",
+          polygon(points := "0 0, 10 3.5, 0 7"),
+        ),
+      ),
+      VModifier.ifTrue(landerSettings.vH != 0 || landerSettings.vV != 0) {
+        line(
+          x1                             := centerIndicator.x.toString,
+          y1                             := centerIndicator.y.toString,
+          x2                             := end.x.toString,
+          y2                             := end.y.toString,
+          stroke                         := "#000",
+          VModifier.attr("stroke-width") := "8",
+          VModifier.attr("marker-end")   := "url(#arrowhead)",
+        )
+      },
+    )
+  }
+
+  def renderLevelGraphic(level: Level, lander: LanderSettings) = {
     import svg._
     val allCoords =
       Coord(0, 0) :: level.initialState.surfaceCoords ::: List(Coord(7000, 0))
@@ -116,6 +164,7 @@ object Main {
     val landerDisplayW = landerWidth * landerScaleFactor
     val landerDisplayH = landerHeight * landerScaleFactor
 
+    val landerCoords        = Coord(lander.x, lander.y)
     val landerDisplayCoords = toDisplayCoord(landerCoords)
     val landerX: Int        = landerDisplayCoords.x - (landerDisplayW / 2).toInt
     val landerY: Int        = landerDisplayCoords.y - landerDisplayH.toInt
@@ -149,11 +198,13 @@ object Main {
             height    := landerDisplayH.toString,
 //            VModifier.attr("transform-box")    := s"fill-box",
 //            VModifier.attr("transform-origin") := s"center",
-            transform := s"rotate($landerRotation, ${landerDisplayW / 2}, ${landerDisplayH / 2})",
+            transform := s"rotate(${lander.rotation}, ${landerDisplayW / 2}, ${landerDisplayH / 2})",
           ),
         ),
       ),
-//    line(
+      displaySpeedIndicator(lander),
+
+      //    line(
 //      stroke := "green",
 //      strokeWidth := "20",
 //      x1 := start.x,

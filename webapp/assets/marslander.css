@@ -1,0 +1,7 @@
+body {
+    padding: 3em;
+}
+
+#app {
+    grid-column: 1;
+}
