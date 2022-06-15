@@ -3,7 +3,7 @@ package webapp
 import cats.effect.IO
 import org.scalajs.dom
 import sttp.client3.impl.cats.FetchCatsBackend
-import webapp.marslander.SurfaceModel
+import webapp.marslander.Level
 
 object Communication {
   val fetchBackend = FetchCatsBackend[IO]()
@@ -15,12 +15,12 @@ object Communication {
     ) ""
     else "codingame/marslander/"}"
 
-  def getLevels: IO[List[SurfaceModel]] = {
+  def getLevels: IO[List[Level]] = {
     import sttp.client3._
     import sttp.client3.circe._
     import webapp.marslander.Codecs._
 
-    val request = basicRequest.response(asJson[List[SurfaceModel]]).get(uri"$assetLocation/levels.json")
+    val request = basicRequest.response(asJson[List[Level]]).get(uri"$assetLocation/levels.json")
 
     fetchBackend
       .send(request)

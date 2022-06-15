@@ -43,7 +43,16 @@
         }
       }
     },
-    "name": "2-1"
+    "name": "2-1.log",
+    "landerInitialState": {
+      "x": 2500,
+      "y": 2700,
+      "hSpeed": 0,
+      "vSpeed": 0,
+      "fuel": 550,
+      "rotate": 0,
+      "power": 0
+    }
   },
   {
     "initialState": {
@@ -101,7 +110,16 @@
         }
       }
     },
-    "name": "2-2"
+    "name": "2-2.log",
+    "landerInitialState": {
+      "x": 6500,
+      "y": 2800,
+      "hSpeed": -100,
+      "vSpeed": 0,
+      "fuel": 600,
+      "rotate": 90,
+      "power": 0
+    }
   },
   {
     "initialState": {
@@ -147,7 +165,16 @@
         }
       }
     },
-    "name": "2-3"
+    "name": "2-3.log",
+    "landerInitialState": {
+      "x": 6500,
+      "y": 2800,
+      "hSpeed": -90,
+      "vSpeed": 0,
+      "fuel": 750,
+      "rotate": 90,
+      "power": 0
+    }
   },
   {
     "initialState": {
@@ -245,7 +272,16 @@
         }
       }
     },
-    "name": "2-4"
+    "name": "2-4.log",
+    "landerInitialState": {
+      "x": 500,
+      "y": 2700,
+      "hSpeed": 100,
+      "vSpeed": 0,
+      "fuel": 800,
+      "rotate": -90,
+      "power": 0
+    }
   },
   {
     "initialState": {
@@ -343,7 +379,16 @@
         }
       }
     },
-    "name": "2-5"
+    "name": "2-5.log",
+    "landerInitialState": {
+      "x": 6500,
+      "y": 2700,
+      "hSpeed": -50,
+      "vSpeed": 0,
+      "fuel": 1000,
+      "rotate": 90,
+      "power": 0
+    }
   },
   {
     "initialState": {
@@ -449,7 +494,16 @@
         }
       }
     },
-    "name": "3-1"
+    "name": "3-1.log",
+    "landerInitialState": {
+      "x": 6500,
+      "y": 2600,
+      "hSpeed": -20,
+      "vSpeed": 0,
+      "fuel": 1000,
+      "rotate": 45,
+      "power": 0
+    }
   },
   {
     "initialState": {
@@ -539,6 +593,15 @@
         }
       }
     },
-    "name": "3-2"
+    "name": "3-2.log",
+    "landerInitialState": {
+      "x": 6500,
+      "y": 2000,
+      "hSpeed": 0,
+      "vSpeed": 0,
+      "fuel": 1200,
+      "rotate": 0,
+      "power": 0
+    }
   }
 ]

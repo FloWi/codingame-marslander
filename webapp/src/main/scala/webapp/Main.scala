@@ -4,7 +4,7 @@ import cats.effect.SyncIO
 import colibri.{BehaviorSubject, Subject}
 import outwatch._
 import outwatch.dsl._
-import webapp.marslander.{Coord, SurfaceModel}
+import webapp.marslander.{Coord, Level}
 
 // Outwatch documentation:
 // https://outwatch.github.io/docs/readme.html
@@ -19,8 +19,8 @@ object Main {
       Communication.getLevels.map(renderUi),
     )
 
-  def renderUi(allLevels: List[SurfaceModel]) = {
-    val selectedLevel  = Subject.behavior(allLevels.headOption)
+  def renderUi(allLevels: List[Level]) = {
+    val selectedLevel  = Subject.behavior(allLevels.lastOption)
     val levelSelection = div(allLevels.map { level =>
       button(s"level ${level.name}", onClick.as(Some(level)) --> selectedLevel)
     })
@@ -77,8 +77,11 @@ object Main {
       )
     }
 
-  def renderLevel(level: SurfaceModel): VModifier = {
-    val landerState = Subject.behavior(LanderSettings(100, 100, 0))
+  def renderLevel(level: Level): VModifier = {
+
+    val landerState = Subject.behavior(
+      LanderSettings(level.landerInitialState.x, level.landerInitialState.y, level.landerInitialState.rotate),
+    )
 
     div(
       h1(s"Level ${level.name}"),
@@ -97,7 +100,7 @@ object Main {
   def toDisplayCoord(coord: Coord): Coord =
     Coord(coord.x, 3000 - coord.y)
 
-  def renderLevelGraphic(level: SurfaceModel, landerCoords: Coord, landerRotation: Int) = {
+  def renderLevelGraphic(level: Level, landerCoords: Coord, landerRotation: Int) = {
     import svg._
     val allCoords =
       Coord(0, 0) :: level.initialState.surfaceCoords ::: List(Coord(7000, 0))
@@ -108,7 +111,7 @@ object Main {
     val landerWidth  = 335.6
     val landerHeight = 308.7
 
-    val landerScaleFactor = 0.75
+    val landerScaleFactor = 0.55
 
     val landerDisplayW = landerWidth * landerScaleFactor
     val landerDisplayH = landerHeight * landerScaleFactor

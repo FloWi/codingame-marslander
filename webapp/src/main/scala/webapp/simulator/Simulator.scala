@@ -1,6 +1,6 @@
 package webapp.simulator
 
-import webapp.marslander.SurfaceModel
+import webapp.marslander.Level
 import webapp.vectory.Vec2
 
 object Simulator {
@@ -62,7 +62,7 @@ object Simulator {
 
   }
 
-  case class SimulationStepInput(initialState: SurfaceModel, state: PreciseState, command: GameCommand)
+  case class SimulationStepInput(initialState: Level, state: PreciseState, command: GameCommand)
 
   def simulate(input: SimulationStepInput): PreciseState = {
 
