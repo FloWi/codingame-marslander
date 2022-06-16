@@ -1,8 +1,9 @@
 package webapp
 
 import cats.effect.SyncIO
-import colibri.{BehaviorSubject, Subject}
-import org.scalajs.dom.KeyCode
+import colibri.{BehaviorSubject, Observable, Subject}
+import com.raquo.domtypes.jsdom.defs.events.TypedTargetMouseEvent
+import org.scalajs.dom.{Element, KeyCode}
 import outwatch._
 import outwatch.dsl._
 import webapp.marslander.{Coord, Level}
@@ -209,6 +210,104 @@ object Main {
     )
   }
 
+  case class ThrustVectorControl(startDragPercent: Option[Vec2], dragLocationPercent: Option[Vec2])
+
+  def thrustVectoringControl(ctrlSub: Subject[ThrustVectorControl]): Observable[VModifier] = {
+    /*
+    - mouse down (capture mouse point --> translate to percent-coord)
+    - mouse move (capture 2nd mouse point --> translate to percent-coord)
+    - calculate vector between points
+    - draw vector
+    - translate vector to control (angle (-90 - 90), thrust (0 - 5) )
+
+     */
+
+    import svg._
+
+    val max       = 400
+    val maxLength = max.toString
+
+    def toViewBox(c: Vec2): Vec2 =
+      Vec2(viewBoxSize.x * c.x, viewBoxSize.y * c.y)
+
+    ctrlSub.distinctOnEquals.map { ctrl =>
+      ctrl.startDragPercent.map(toViewBox).zip(ctrl.dragLocationPercent.map(toViewBox)) match {
+        case None                   => VModifier.empty
+        case Some((start, current)) =>
+          val thrustVector = current - start
+          val length       = thrustVector.length
+
+          val controlSize = Vec2(800, 800)
+
+          val startInside   = controlSize / 2
+          val currentInside = startInside + thrustVector
+
+//          println(s"rendering thrustVectoring control")
+//          println(s"   startDragPercent: ${ctrl.startDragPercent}")
+//          println(s"              start: $start")
+//          println(s" dragLocationPercent: ${ctrl.dragLocationPercent}")
+//          println(s"             current: $current")
+//          println(s"        thrustVector: $thrustVector")
+//          println(s"         startInside: $startInside")
+//          println(s"       currentInside: $currentInside")
+
+          svg(
+            x             := (start.x - (controlSize.x / 2)).toInt.toString, // "0",
+            y             := (start.y - (controlSize.y / 2)).toInt.toString, // "0",
+            width         := controlSize.x.toString,
+            height        := controlSize.y.toString,
+            pointerEvents := "none",
+
+            // circle(cx := maxLength, cy := maxLength, r := maxLength, fill := "none", stroke := "black", strokeWidth := "5"),
+            circle(
+              cx            := startInside.x.toInt.toString,
+              cy            := startInside.y.toInt.toString,
+              r             := "40",
+              fill          := "green",
+              pointerEvents := "none",
+            ),
+            circle(
+              cx            := startInside.x.toInt.toString,
+              cy            := startInside.y.toInt.toString,
+              r             := (controlSize.x / 2).toString,
+              fill          := "none",
+              stroke        := "green",
+              pointerEvents := "none",
+            ),
+            defs(
+              marker(
+                idAttr       := "arrowhead",
+                markerWidth  := "10",
+                markerHeight := "7",
+                refX         := "0",
+                refY         := "3.5",
+                orient       := "auto",
+                polygon(points := "0 0, 10 3.5, 0 7"),
+              ),
+            ),
+            VModifier.ifTrue(length >= 10) {
+              line(
+                pointerEvents                  := "none",
+                x1                             := startInside.x.toInt.toString,
+                y1                             := startInside.y.toInt.toString,
+                x2                             := currentInside.x.toString,
+                y2                             := currentInside.y.toString,
+                stroke                         := "green",
+                VModifier.attr("stroke-width") := "8",
+                VModifier.attr("marker-end")   := "url(#arrowhead)",
+              )
+            },
+          )
+      }
+    }
+
+  }
+
+  def roundAt(p: Int)(n: Double): Double = { val s = math pow (10, p); (math round n * s) / s }
+
+  val canvasSize: Vec2  = Vec2(1400, 600)
+  val viewBoxSize: Vec2 = Vec2(7000, 3000)
+
   def renderLevelGraphic(level: Level, lander: LanderSettings) = {
     import svg._
     val allCoords =
@@ -230,26 +329,80 @@ object Main {
     val landerX: Int        = landerDisplayCoords.x - (landerDisplayW / 2).toInt
     val landerY: Int        = landerDisplayCoords.y - landerDisplayH.toInt
 
+    val ctrlSub = Subject.behavior(ThrustVectorControl(None, None))
+
+    def getPercentFromMouseEvent(evt: TypedTargetMouseEvent[Element]): Vec2 = {
+      val e    = evt.target
+      evt.preventDefault()
+      evt.stopPropagation()
+      evt.stopImmediatePropagation()
+      val dim  = e.getBoundingClientRect()
+      val w    = dim.width
+      val h    = dim.height
+      val x    = evt.clientX - dim.left
+      val y    = evt.clientY - dim.top
+      val relX = x / w
+      val relY = y / h
+
+      if (
+        relX > 1 || relY > 1 || w < canvasSize.x * 0.9 || w > canvasSize.x * 1.1 || h < canvasSize.y * 0.9 || h > canvasSize.y * 1.1
+      ) {
+        println(s"""ERROR
+e   : $e
+dim : $dim
+w   : $w
+h   : $h
+x   : $x
+y   : $y
+relX: $relX
+relY: $relY
+""".stripMargin)
+      }
+
+      val relLocation = Vec2(relX, relY)
+
+      relLocation
+    }
+
     svg(
-      width   := "1400",
-      height  := "600",
-      viewBox := "0 0 7000 3000",
+      width   := canvasSize.x.toInt.toString,                          // "1400",
+      height  := canvasSize.y.toInt.toString,                          // "600",
+      viewBox := s"0 0 ${viewBoxSize.x.toInt} ${viewBoxSize.y.toInt}", // "0 0 7000 3000",
       rect(
-        x           := "0",
-        y           := "0",
-        width       := "7000",
-        height      := "3000",
-        fill        := "hsla(200,10%,80%,0.9)",
+        x                                         := "0",
+        y                                         := "0",
+        width                                     := viewBoxSize.x.toInt.toString, // "7000",
+        height                                    := viewBoxSize.y.toInt.toString, // "3000",
+        fill                                      := "hsla(200,10%,80%,0.9)",
+        pointerEvents                             := "none",
       ),
       polyline(
-        points      := pts,
-        fill        := "red",
-        stroke      := "black",
-        strokeWidth := "3",
+        points                                    := pts,
+        fill                                      := "red",
+        stroke                                    := "black",
+        strokeWidth                               := "3",
+        pointerEvents                             := "none",
       ),
+      onMouseDown.map(getPercentFromMouseEvent).map { relLocation =>
+        ThrustVectorControl(Some(relLocation), Some(relLocation))
+      } --> ctrlSub,
+      ctrlSub.map { ctrl =>
+        onMouseMove.map { evt =>
+          if (ctrl.startDragPercent.isEmpty) ctrl
+          else {
+            val relLocation = getPercentFromMouseEvent(evt)
+            ctrl.copy(dragLocationPercent = Some(relLocation))
+          }
+
+        } --> ctrlSub
+      },
+      onMouseUp.as(ThrustVectorControl(None, None)) --> ctrlSub,
+      thrustVectoringControl(ctrlSub),
       g(
-        transform   := s"translate($landerX, $landerY)",
+        pointerEvents                             := "none",
+        transform                                 := s"translate($landerX, $landerY)",
         g(
+          pointerEvents := "none",
           image(
 //          <image x="10" y="20" width="80" height="80" href="recursion.svg" />
             // w: 335,6
@@ -263,7 +416,7 @@ object Main {
           ),
         ),
       ),
-      displaySpeedIndicator(lander),
+      displaySpeedIndicator(lander)(pointerEvents := "none"),
 
       //    line(
 //      stroke := "green",
