@@ -7,7 +7,7 @@ import org.scalajs.dom.Element
 import outwatch._
 import outwatch.dsl._
 import webapp.marslander.{Coord, Level}
-import webapp.vectory.Vec2
+import webapp.vectory.{Algorithms, Line, Vec2}
 
 // Outwatch documentation:
 // https://outwatch.github.io/docs/readme.html
@@ -38,8 +38,8 @@ object Main {
     )
   }
 
-  case class LanderSettings(x: Int, y: Int, rotation: Int, vH: Int, vV: Int)
-  def landerSettings(state: BehaviorSubject[LanderSettings]) =
+  case class LanderState(x: Int, y: Int, rotation: Int, vH: Int, vV: Int)
+  def landerSettings(state: BehaviorSubject[LanderState]) =
     state.map { s =>
       div(
         display.flex,
@@ -83,7 +83,7 @@ object Main {
   def renderLevel(level: Level): VModifier = {
 
     val landerState = Subject.behavior(
-      LanderSettings(
+      LanderState(
         level.landerInitialState.x,
         level.landerInitialState.y,
         level.landerInitialState.rotate,
@@ -92,10 +92,11 @@ object Main {
       ),
     )
 
-    val landerControl =
+    val landerControlSub =
       Subject.behavior(MouseControlState(level.landerInitialState.rotate, level.landerInitialState.power))
 
-    landerState.map { s =>
+    landerState.map { s: LanderState =>
+      val rays = calcShipRays(s, level)
       div(
         h1(s"Level ${level.name}"),
         // landerSettings(landerState),
@@ -106,7 +107,7 @@ object Main {
           VModifier.style("gap") := "3rem",
           div(
             h2("Lander Control"),
-            landerControl.map { ctrl =>
+            landerControlSub.map { ctrl =>
               table(
                 thead(tr(th("angle"), th("thrust"))),
                 tbody(tr(td(ctrl.angle), td(ctrl.thrust))),
@@ -123,11 +124,39 @@ object Main {
             ),
           ),
         ),
-        renderLevelGraphic(level, s, landerControl),
+        renderLevelGraphic(level, s, landerControlSub, rays),
         h2("Game Input"),
         pre(level.toInputLines.mkString("\n")),
       )
     }
+  }
+
+  case class ShipRay(surfacePoint: Vec2, ship: Vec2, ray: Line, intersections: List[Algorithms.LineIntersection])
+  def calcShipRays(landerState: LanderState, level: Level): List[ShipRay] = {
+    val surfaceLines = level.initialState.surfaceCoords
+      .sliding(2, 1)
+      .toList
+      .map { case List(first, second) =>
+        Line(first.x, first.y, second.x, second.y)
+      }
+
+    val ship = Vec2(landerState.x, landerState.y)
+    val rays = level.initialState.surfaceCoords.map { c =>
+      val surfacePoint      = Vec2(c.x, c.y)
+      val ray               = Line(ship, surfacePoint)
+      val otherSurfaceLines =
+        surfaceLines.filterNot(l => (l.start - surfacePoint).length < 0.01 || (l.end - surfacePoint).length < 0.01)
+      val collisions        = otherSurfaceLines.flatMap { l =>
+        l.intersect(ray) match {
+          case Some(i) if i.onLine1 && i.onLine2 => List(i)
+          case _                                 => List.empty
+        }
+      }
+
+      ShipRay(surfacePoint, ship, ray, collisions)
+    }
+
+    rays
   }
 
   def toDisplayCoord(coord: Coord): Coord =
@@ -135,7 +164,7 @@ object Main {
 
   case class MouseControlState(angle: Int, thrust: Int)
 
-  def displaySpeedIndicator(landerSettings: LanderSettings) = {
+  def displaySpeedIndicator(landerSettings: LanderState) = {
 
     val v               = Vec2(landerSettings.vH, landerSettings.vV)
     val l               = v.length
@@ -186,7 +215,6 @@ object Main {
   def thrustVectoringControl(
     mouseDragControlSub: Subject[MouseDragThrustControl],
     ctrlSub: Subject[MouseControlState],
-    debugSub: Subject[String],
   ): Observable[VModifier] = {
     /*
     - mouse down (capture mouse point --> translate to percent-coord)
@@ -233,20 +261,20 @@ object Main {
 
           val normalizedThrustVector = Vec2.unit(clampedAngle.toRadians) * normalizedLength
 
-          debugSub.unsafeOnNext(s"""
-              |val canvasVector           = $canvasVector
-              |val thrustVector           = $thrustVector
-              |val length                 = $length
-              |val maxLength              = $maxLength
-              |val controlSize            = $controlSize
-              |val lengthRatio            = $lengthRatio
-              |val normalized             = $normalized
-              |val normalizedLength       = $normalizedLength
-              |val thrustAngle            = $thrustAngle
-              |val thrustAngleDeg         = $thrustAngleDeg
-              |val normalizedThrustVector = $normalizedThrustVector
-              |val clampedAngle           = $clampedAngle
-              |""".stripMargin)
+//          debugSub.unsafeOnNext(s"""
+//              |val canvasVector           = $canvasVector
+//              |val thrustVector           = $thrustVector
+//              |val length                 = $length
+//              |val maxLength              = $maxLength
+//              |val controlSize            = $controlSize
+//              |val lengthRatio            = $lengthRatio
+//              |val normalized             = $normalized
+//              |val normalizedLength       = $normalizedLength
+//              |val thrustAngle            = $thrustAngle
+//              |val thrustAngleDeg         = $thrustAngleDeg
+//              |val normalizedThrustVector = $normalizedThrustVector
+//              |val clampedAngle           = $clampedAngle
+//              |""".stripMargin.trim)
 
           ctrlSub.unsafeOnNext(MouseControlState(angle = (clampedAngle + 90).toInt, thrust = normalized / 25))
 
@@ -312,7 +340,12 @@ object Main {
   val canvasSize: Vec2  = Vec2(1400, 600)
   val viewBoxSize: Vec2 = Vec2(7000, 3000)
 
-  def renderLevelGraphic(level: Level, lander: LanderSettings, landerControl: BehaviorSubject[MouseControlState]) = {
+  def renderLevelGraphic(
+    level: Level,
+    lander: LanderState,
+    landerControl: BehaviorSubject[MouseControlState],
+    rays: List[ShipRay],
+  ) = {
     import svg._
     val allCoords =
       Coord(0, 0) :: level.initialState.surfaceCoords ::: List(Coord(7000, 0))
@@ -356,6 +389,18 @@ object Main {
           strokeWidth                               := "3",
           pointerEvents                             := "none",
         ),
+        rays.map { case ShipRay(surfacePoint, ship, ray, intersections) =>
+          val start = landerDisplayCoords
+          val end   = toDisplayCoord(Coord(surfacePoint.x.toInt, surfacePoint.y.toInt))
+          line(
+            stroke      := (if (intersections.isEmpty) "green" else "red"),
+            strokeWidth := "5",
+            x1          := start.x.toString,
+            y1          := start.y.toString,
+            x2          := end.x.toString,
+            y2          := end.y.toString,
+          )
+        },
         onMouseDown.map(getRelativeLocationOfMouseEventInContainer).map { relLocation =>
           MouseDragThrustControl(Some(relLocation), Some(relLocation))
         } --> ctrlSub,
@@ -370,7 +415,7 @@ object Main {
           } --> ctrlSub
         },
         onMouseUp.as(MouseDragThrustControl(None, None)) --> ctrlSub,
-        thrustVectoringControl(ctrlSub, landerControl, debugSub),
+        thrustVectoringControl(ctrlSub, landerControl),
         g(
           pointerEvents                             := "none",
           transform                                 := s"translate($landerX, $landerY)",
@@ -391,7 +436,7 @@ object Main {
         ),
         displaySpeedIndicator(lander)(pointerEvents := "none"),
 
-        //    line(
+//    line(
 //      stroke := "green",
 //      strokeWidth := "20",
 //      x1 := start.x,
