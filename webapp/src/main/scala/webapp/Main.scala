@@ -104,7 +104,7 @@ object Main {
                |vH: ${s.vH}
                |vV: ${s.vV}
                |""".stripMargin),
-          renderLevelGraphic(level, s),
+          renderLevelGraphic(level, s, landerControl),
         )
       },
       renderControlPanel(landerControl),
@@ -221,7 +221,8 @@ object Main {
   }
 
   def thrustVectoringControl(
-    ctrlSub: Subject[MouseDragThrustControl],
+    mouseDragControlSub: Subject[MouseDragThrustControl],
+    ctrlSub: Subject[MouseControlState],
     debugSub: Subject[String],
   ): Observable[VModifier] = {
     /*
@@ -241,7 +242,7 @@ object Main {
     def toViewBox(c: Vec2): Vec2 =
       Vec2(viewBoxSize.x * c.x, viewBoxSize.y * c.y)
 
-    ctrlSub.distinctOnEquals.map { ctrl =>
+    mouseDragControlSub.distinctOnEquals.map { ctrl =>
       ctrl.startDragPercent.map(toViewBox).zip(ctrl.dragLocationPercent.map(toViewBox)) match {
         case None                   => VModifier.empty
         case Some((start, current)) =>
@@ -251,7 +252,7 @@ object Main {
             val isDraggingBelowHorizon = canvasVector.y > 0
 
             val y =
-              if (isDraggingBelowHorizon) 0
+              if (isDraggingBelowHorizon) -1e-10 // mini number, to prevent weird edge case behavior
               else canvasVector.y
 
             canvasVector.copy(y = y)
@@ -263,11 +264,11 @@ object Main {
           val controlSize = Vec2(2 * maxLength + 10, maxLength + 10)
 
           val lengthRatio      = length / maxLength
-          val normalized       = myRound(25)((lengthRatio * 100).toInt) // [0, 25, 50, 75, 100]
-          val normalizedLength = clamp(normalized / 100.0 * maxLength, 0, maxLength)
+          val normalized       = clamp(myRound(25)((lengthRatio * 100).toInt), 0, 100) // [0, 25, 50, 75, 100]
+          val normalizedLength = normalized / 100.0 * maxLength
 
           val thrustAngle    = thrustVector.angle
-          val thrustAngleDeg = thrustAngle.toDegrees // -180 - +180
+          val thrustAngleDeg = math.round(thrustAngle.toDegrees) // -180 - +180
           val clampedAngle   = thrustAngleDeg
 
 //          val  normalizedThrustVector= thrustVector.normalized * normalizedLength
@@ -288,6 +289,8 @@ object Main {
               |val normalizedThrustVector = $normalizedThrustVector
               |val clampedAngle           = $clampedAngle
               |""".stripMargin)
+
+          ctrlSub.unsafeOnNext(MouseControlState(angle = (clampedAngle + 90).toInt, thrust = normalized / 25))
 
           val startInside = controlSize / 2
 
@@ -353,7 +356,7 @@ object Main {
   val canvasSize: Vec2  = Vec2(1400, 600)
   val viewBoxSize: Vec2 = Vec2(7000, 3000)
 
-  def renderLevelGraphic(level: Level, lander: LanderSettings) = {
+  def renderLevelGraphic(level: Level, lander: LanderSettings, landerControl: BehaviorSubject[MouseControlState]) = {
     import svg._
     val allCoords =
       Coord(0, 0) :: level.initialState.surfaceCoords ::: List(Coord(7000, 0))
@@ -412,7 +415,7 @@ object Main {
           } --> ctrlSub
         },
         onMouseUp.as(MouseDragThrustControl(None, None)) --> ctrlSub,
-        thrustVectoringControl(ctrlSub, debugSub),
+        thrustVectoringControl(ctrlSub, landerControl, debugSub),
         g(
           pointerEvents                             := "none",
           transform                                 := s"translate($landerX, $landerY)",
