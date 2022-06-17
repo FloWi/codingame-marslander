@@ -3,7 +3,7 @@ package webapp
 import cats.effect.SyncIO
 import colibri.{BehaviorSubject, Observable, Subject}
 import com.raquo.domtypes.jsdom.defs.events.TypedTargetMouseEvent
-import org.scalajs.dom.{Element, KeyCode}
+import org.scalajs.dom.Element
 import outwatch._
 import outwatch.dsl._
 import webapp.marslander.{Coord, Level}
@@ -95,82 +95,45 @@ object Main {
     val landerControl =
       Subject.behavior(MouseControlState(level.landerInitialState.rotate, level.landerInitialState.power))
 
-    div(
-      h1(s"Level ${level.name}"),
-      landerSettings(landerState),
-      landerState.map { s =>
+    landerState.map { s =>
+      div(
+        h1(s"Level ${level.name}"),
+        // landerSettings(landerState),
+
         div(
-          pre(s"""(${s.x}, ${s.y}) @ ${s.rotation}°
-               |vH: ${s.vH}
-               |vV: ${s.vV}
-               |""".stripMargin),
-          renderLevelGraphic(level, s, landerControl),
-        )
-      },
-      renderControlPanel(landerControl),
-      h2("Game Input"),
-      pre(level.toInputLines.mkString("\n")),
-    )
+          display.flex,
+          flex                   := "row",
+          VModifier.style("gap") := "3rem",
+          div(
+            h2("Lander Control"),
+            landerControl.map { ctrl =>
+              table(
+                thead(tr(th("angle"), th("thrust"))),
+                tbody(tr(td(ctrl.angle), td(ctrl.thrust))),
+              )
+            },
+          ),
+          div(
+            h2("Lander State"),
+            div(
+              table(
+                thead(tr(th("x"), th("y"), th("rotation"), th("vH"), th("vV"))),
+                tbody(tr(td(s.x), td(s.y), td(s.rotation), td(s.vH), td(s.vV))),
+              ),
+            ),
+          ),
+        ),
+        renderLevelGraphic(level, s, landerControl),
+        h2("Game Input"),
+        pre(level.toInputLines.mkString("\n")),
+      )
+    }
   }
 
   def toDisplayCoord(coord: Coord): Coord =
     Coord(coord.x, 3000 - coord.y)
 
   case class MouseControlState(angle: Int, thrust: Int)
-
-  def renderControlPanel(controlState: BehaviorSubject[MouseControlState]) = {
-    import svg._
-
-    sealed trait PowerCtrl
-    case class Set(thrust: Int) extends PowerCtrl
-    case object Increase        extends PowerCtrl
-    case object Decrease        extends PowerCtrl
-
-    val onNumber = onKeyDown.map { e =>
-      if (e.key == "+") Some(Increase)
-      else if (e.key == "-") Some(Decrease)
-      else
-        e.keyCode match {
-          case KeyCode.Num0 => Some(Set(0))
-          case KeyCode.Num1 => Some(Set(1))
-          case KeyCode.Num2 => Some(Set(2))
-          case KeyCode.Num3 => Some(Set(3))
-          case KeyCode.Num4 => Some(Set(4))
-          case _            => None
-        }
-    }
-
-    controlState.map { s =>
-      div(
-        onNumber.map {
-          case Some(Set(value))               => s.copy(thrust = value)
-          case Some(Increase) if s.thrust < 4 => s.copy(thrust = s.thrust + 1)
-          case Some(Decrease) if s.thrust > 0 => s.copy(thrust = s.thrust - 1)
-          case _                              => s
-        } --> controlState,
-        label(
-          "rotation",
-          input(
-            tpe     := "range",
-            minAttr := "-90",
-            maxAttr := "90",
-            value   := s.angle.toString,
-            cls     := "range",
-            onInput.value.map(v => s.copy(angle = v.toInt)) --> controlState,
-          ),
-        ),
-        pre(
-          s"""x: ${s.angle}
-             |thrust: ${s.thrust}""".stripMargin,
-        ),
-        svg(
-          width  := "400",
-          height := "100",
-          fill   := "lightgrey",
-        ),
-      )
-    }
-  }
 
   def displaySpeedIndicator(landerSettings: LanderSettings) = {
 
@@ -236,9 +199,6 @@ object Main {
 
     import svg._
 
-    val max       = 400
-    val maxLength = max.toString
-
     def toViewBox(c: Vec2): Vec2 =
       Vec2(viewBoxSize.x * c.x, viewBoxSize.y * c.y)
 
@@ -271,8 +231,6 @@ object Main {
           val thrustAngleDeg = math.round(thrustAngle.toDegrees) // -180 - +180
           val clampedAngle   = thrustAngleDeg
 
-//          val  normalizedThrustVector= thrustVector.normalized * normalizedLength
-
           val normalizedThrustVector = Vec2.unit(clampedAngle.toRadians) * normalizedLength
 
           debugSub.unsafeOnNext(s"""
@@ -291,8 +249,6 @@ object Main {
               |""".stripMargin)
 
           ctrlSub.unsafeOnNext(MouseControlState(angle = (clampedAngle + 90).toInt, thrust = normalized / 25))
-
-          val startInside = controlSize / 2
 
           svg(
             x             := (start.x - controlSize.x / 2).toInt.toString,                                 // "0",
@@ -381,7 +337,6 @@ object Main {
     val debugSub = Subject.behavior("debug")
 
     div(
-      pre(debugSub),
       svg(
         width   := canvasSize.x.toInt.toString,                          // "1400",
         height  := canvasSize.y.toInt.toString,                          // "600",
@@ -445,6 +400,7 @@ object Main {
 //      y2 := end.y
 //    ),
       ),
+      pre(debugSub),
     )
 
   }
