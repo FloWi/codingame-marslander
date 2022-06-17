@@ -242,15 +242,6 @@ object Main {
           val startInside   = controlSize / 2
           val currentInside = startInside + thrustVector
 
-//          println(s"rendering thrustVectoring control")
-//          println(s"   startDragPercent: ${ctrl.startDragPercent}")
-//          println(s"              start: $start")
-//          println(s" dragLocationPercent: ${ctrl.dragLocationPercent}")
-//          println(s"             current: $current")
-//          println(s"        thrustVector: $thrustVector")
-//          println(s"         startInside: $startInside")
-//          println(s"       currentInside: $currentInside")
-
           svg(
             x             := (start.x - (controlSize.x / 2)).toInt.toString, // "0",
             y             := (start.y - (controlSize.y / 2)).toInt.toString, // "0",
@@ -269,9 +260,10 @@ object Main {
             circle(
               cx            := startInside.x.toInt.toString,
               cy            := startInside.y.toInt.toString,
-              r             := (controlSize.x / 2).toString,
+              r             := (controlSize.x * 0.48).toString,
               fill          := "none",
               stroke        := "green",
+              strokeWidth   := "10",
               pointerEvents := "none",
             ),
             defs(
@@ -331,39 +323,6 @@ object Main {
 
     val ctrlSub = Subject.behavior(ThrustVectorControl(None, None))
 
-    def getPercentFromMouseEvent(evt: TypedTargetMouseEvent[Element]): Vec2 = {
-      val e    = evt.target
-      evt.preventDefault()
-      evt.stopPropagation()
-      evt.stopImmediatePropagation()
-      val dim  = e.getBoundingClientRect()
-      val w    = dim.width
-      val h    = dim.height
-      val x    = evt.clientX - dim.left
-      val y    = evt.clientY - dim.top
-      val relX = x / w
-      val relY = y / h
-
-      if (
-        relX > 1 || relY > 1 || w < canvasSize.x * 0.9 || w > canvasSize.x * 1.1 || h < canvasSize.y * 0.9 || h > canvasSize.y * 1.1
-      ) {
-        println(s"""ERROR
-e   : $e
-dim : $dim
-w   : $w
-h   : $h
-x   : $x
-y   : $y
-relX: $relX
-relY: $relY
-""".stripMargin)
-      }
-
-      val relLocation = Vec2(relX, relY)
-
-      relLocation
-    }
-
     svg(
       width   := canvasSize.x.toInt.toString,                          // "1400",
       height  := canvasSize.y.toInt.toString,                          // "600",
@@ -383,14 +342,14 @@ relY: $relY
         strokeWidth                               := "3",
         pointerEvents                             := "none",
       ),
-      onMouseDown.map(getPercentFromMouseEvent).map { relLocation =>
+      onMouseDown.map(getRelativeLocationOfMouseEventInContainer).map { relLocation =>
         ThrustVectorControl(Some(relLocation), Some(relLocation))
       } --> ctrlSub,
       ctrlSub.map { ctrl =>
         onMouseMove.map { evt =>
           if (ctrl.startDragPercent.isEmpty) ctrl
           else {
-            val relLocation = getPercentFromMouseEvent(evt)
+            val relLocation = getRelativeLocationOfMouseEventInContainer(evt)
             ctrl.copy(dragLocationPercent = Some(relLocation))
           }
 
@@ -452,6 +411,39 @@ relY: $relY
       div("text: ", text),
       div("length: ", text.map(_.length)),
     )
+  }
+
+  def getRelativeLocationOfMouseEventInContainer(evt: TypedTargetMouseEvent[Element]): Vec2 = {
+    val e    = evt.target
+    evt.preventDefault()
+    evt.stopPropagation()
+    evt.stopImmediatePropagation()
+    val dim  = e.getBoundingClientRect()
+    val w    = dim.width
+    val h    = dim.height
+    val x    = evt.clientX - dim.left
+    val y    = evt.clientY - dim.top
+    val relX = x / w
+    val relY = y / h
+
+    if (
+      relX > 1 || relY > 1 || w < canvasSize.x * 0.9 || w > canvasSize.x * 1.1 || h < canvasSize.y * 0.9 || h > canvasSize.y * 1.1
+    ) {
+      println(s"""ERROR
+e   : $e
+dim : $dim
+w   : $w
+h   : $h
+x   : $x
+y   : $y
+relX: $relX
+relY: $relY
+""".stripMargin)
+    }
+
+    val relLocation = Vec2(relX, relY)
+
+    relLocation
   }
 
 }
