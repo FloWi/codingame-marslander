@@ -210,9 +210,20 @@ object Main {
     )
   }
 
-  case class ThrustVectorControl(startDragPercent: Option[Vec2], dragLocationPercent: Option[Vec2])
+  case class MouseDragThrustControl(startDragPercent: Option[Vec2], dragLocationPercent: Option[Vec2])
 
-  def thrustVectoringControl(ctrlSub: Subject[ThrustVectorControl]): Observable[VModifier] = {
+  def clamp[N: Numeric](x: N, lower: N, upper: N): N = {
+    val ord = implicitly[Ordering[N]]
+
+    if (ord.gt(x, upper)) upper
+    else if (ord.lt(x, lower)) lower
+    else x
+  }
+
+  def thrustVectoringControl(
+    ctrlSub: Subject[MouseDragThrustControl],
+    debugSub: Subject[String],
+  ): Observable[VModifier] = {
     /*
     - mouse down (capture mouse point --> translate to percent-coord)
     - mouse move (capture 2nd mouse point --> translate to percent-coord)
@@ -234,33 +245,72 @@ object Main {
       ctrl.startDragPercent.map(toViewBox).zip(ctrl.dragLocationPercent.map(toViewBox)) match {
         case None                   => VModifier.empty
         case Some((start, current)) =>
-          val thrustVector = current - start
+          val canvasVector = current - start
+
+          val thrustVector = {
+            val isDraggingBelowHorizon = canvasVector.y > 0
+
+            val y =
+              if (isDraggingBelowHorizon) 0
+              else canvasVector.y
+
+            canvasVector.copy(y = y)
+          }
           val length       = thrustVector.length
 
-          val controlSize = Vec2(800, 800)
+          // control is a half circle (upper half)
+          val maxLength   = 400
+          val controlSize = Vec2(2 * maxLength + 10, maxLength + 10)
 
-          val startInside   = controlSize / 2
-          val currentInside = startInside + thrustVector
+          val lengthRatio      = length / maxLength
+          val normalized       = myRound(25)((lengthRatio * 100).toInt) // [0, 25, 50, 75, 100]
+          val normalizedLength = clamp(normalized / 100.0 * maxLength, 0, maxLength)
+
+          val thrustAngle    = thrustVector.angle
+          val thrustAngleDeg = thrustAngle.toDegrees // -180 - +180
+          val clampedAngle   = thrustAngleDeg
+
+//          val  normalizedThrustVector= thrustVector.normalized * normalizedLength
+
+          val normalizedThrustVector = Vec2.unit(clampedAngle.toRadians) * normalizedLength
+
+          debugSub.unsafeOnNext(s"""
+              |val canvasVector           = $canvasVector
+              |val thrustVector           = $thrustVector
+              |val length                 = $length
+              |val maxLength              = $maxLength
+              |val controlSize            = $controlSize
+              |val lengthRatio            = $lengthRatio
+              |val normalized             = $normalized
+              |val normalizedLength       = $normalizedLength
+              |val thrustAngle            = $thrustAngle
+              |val thrustAngleDeg         = $thrustAngleDeg
+              |val normalizedThrustVector = $normalizedThrustVector
+              |val clampedAngle           = $clampedAngle
+              |""".stripMargin)
+
+          val startInside = controlSize / 2
 
           svg(
-            x             := (start.x - (controlSize.x / 2)).toInt.toString, // "0",
-            y             := (start.y - (controlSize.y / 2)).toInt.toString, // "0",
+            x             := (start.x - controlSize.x / 2).toInt.toString,                                 // "0",
+            y             := (start.y - controlSize.y).toInt.toString,                                     // "0",
+            viewBox       := s"-${controlSize.x / 2} -${controlSize.y} ${controlSize.x} ${controlSize.y}", // min-x min-y width height
             width         := controlSize.x.toString,
             height        := controlSize.y.toString,
             pointerEvents := "none",
 
             // circle(cx := maxLength, cy := maxLength, r := maxLength, fill := "none", stroke := "black", strokeWidth := "5"),
             circle(
-              cx            := startInside.x.toInt.toString,
-              cy            := startInside.y.toInt.toString,
+              cx            := "0",
+              cy            := "0",
               r             := "40",
               fill          := "green",
               pointerEvents := "none",
             ),
             circle(
-              cx            := startInside.x.toInt.toString,
-              cy            := startInside.y.toInt.toString,
-              r             := (controlSize.x * 0.48).toString,
+              cx            := "0",
+              cy            := "0",
+              r             := maxLength.toString,
               fill          := "none",
               stroke        := "green",
               strokeWidth   := "10",
@@ -280,13 +330,13 @@ object Main {
             VModifier.ifTrue(length >= 10) {
               line(
                 pointerEvents                  := "none",
-                x1                             := startInside.x.toInt.toString,
-                y1                             := startInside.y.toInt.toString,
-                x2                             := currentInside.x.toString,
-                y2                             := currentInside.y.toString,
+                x1                             := "0",
+                y1                             := "0",
+                x2                             := normalizedThrustVector.x.toString,
+                y2                             := normalizedThrustVector.y.toString,
                 stroke                         := "green",
                 VModifier.attr("stroke-width") := "8",
-                VModifier.attr("marker-end")   := "url(#arrowhead)",
+                // VModifier.attr("marker-end")   := "url(#arrowhead)",
               )
             },
           )
@@ -296,6 +346,9 @@ object Main {
   }
 
   def roundAt(p: Int)(n: Double): Double = { val s = math pow (10, p); (math round n * s) / s }
+
+  def myRound(base: Int)(x: Int): Int =
+    (base * math.round(x / base.toDouble)).toInt
 
   val canvasSize: Vec2  = Vec2(1400, 600)
   val viewBoxSize: Vec2 = Vec2(7000, 3000)
@@ -321,63 +374,66 @@ object Main {
     val landerX: Int        = landerDisplayCoords.x - (landerDisplayW / 2).toInt
     val landerY: Int        = landerDisplayCoords.y - landerDisplayH.toInt
 
-    val ctrlSub = Subject.behavior(ThrustVectorControl(None, None))
+    val ctrlSub  = Subject.behavior(MouseDragThrustControl(None, None))
+    val debugSub = Subject.behavior("debug")
 
-    svg(
-      width   := canvasSize.x.toInt.toString,                          // "1400",
-      height  := canvasSize.y.toInt.toString,                          // "600",
-      viewBox := s"0 0 ${viewBoxSize.x.toInt} ${viewBoxSize.y.toInt}", // "0 0 7000 3000",
-      rect(
-        x                                         := "0",
-        y                                         := "0",
-        width                                     := viewBoxSize.x.toInt.toString, // "7000",
-        height                                    := viewBoxSize.y.toInt.toString, // "3000",
-        fill                                      := "hsla(200,10%,80%,0.9)",
-        pointerEvents                             := "none",
-      ),
-      polyline(
-        points                                    := pts,
-        fill                                      := "red",
-        stroke                                    := "black",
-        strokeWidth                               := "3",
-        pointerEvents                             := "none",
-      ),
-      onMouseDown.map(getRelativeLocationOfMouseEventInContainer).map { relLocation =>
-        ThrustVectorControl(Some(relLocation), Some(relLocation))
-      } --> ctrlSub,
-      ctrlSub.map { ctrl =>
-        onMouseMove.map { evt =>
-          if (ctrl.startDragPercent.isEmpty) ctrl
-          else {
-            val relLocation = getRelativeLocationOfMouseEventInContainer(evt)
-            ctrl.copy(dragLocationPercent = Some(relLocation))
-          }
+    div(
+      pre(debugSub),
+      svg(
+        width   := canvasSize.x.toInt.toString,                          // "1400",
+        height  := canvasSize.y.toInt.toString,                          // "600",
+        viewBox := s"0 0 ${viewBoxSize.x.toInt} ${viewBoxSize.y.toInt}", // "0 0 7000 3000",
+        rect(
+          x                                         := "0",
+          y                                         := "0",
+          width                                     := viewBoxSize.x.toInt.toString, // "7000",
+          height                                    := viewBoxSize.y.toInt.toString, // "3000",
+          fill                                      := "hsla(200,10%,80%,0.9)",
+          pointerEvents                             := "none",
+        ),
+        polyline(
+          points                                    := pts,
+          fill                                      := "red",
+          stroke                                    := "black",
+          strokeWidth                               := "3",
+          pointerEvents                             := "none",
+        ),
+        onMouseDown.map(getRelativeLocationOfMouseEventInContainer).map { relLocation =>
+          MouseDragThrustControl(Some(relLocation), Some(relLocation))
+        } --> ctrlSub,
+        ctrlSub.map { ctrl =>
+          onMouseMove.map { evt =>
+            if (ctrl.startDragPercent.isEmpty) ctrl
+            else {
+              val relLocation = getRelativeLocationOfMouseEventInContainer(evt)
+              ctrl.copy(dragLocationPercent = Some(relLocation))
+            }
 
-        } --> ctrlSub
-      },
-      onMouseUp.as(ThrustVectorControl(None, None)) --> ctrlSub,
-      thrustVectoringControl(ctrlSub),
-      g(
-        pointerEvents                             := "none",
-        transform                                 := s"translate($landerX, $landerY)",
+          } --> ctrlSub
+        },
+        onMouseUp.as(MouseDragThrustControl(None, None)) --> ctrlSub,
+        thrustVectoringControl(ctrlSub, debugSub),
         g(
-          pointerEvents := "none",
-          image(
+          pointerEvents                             := "none",
+          transform                                 := s"translate($landerX, $landerY)",
+          g(
+            pointerEvents := "none",
+            image(
 //          <image x="10" y="20" width="80" height="80" href="recursion.svg" />
-            // w: 335,6
-            // h: 308,7
-            href      := s"${Communication.assetLocation}/Lander.svg",
-            width     := landerDisplayW.toString,
-            height    := landerDisplayH.toString,
+              // w: 335,6
+              // h: 308,7
+              href      := s"${Communication.assetLocation}/Lander.svg",
+              width     := landerDisplayW.toString,
+              height    := landerDisplayH.toString,
 //            VModifier.attr("transform-box")    := s"fill-box",
 //            VModifier.attr("transform-origin") := s"center",
-            transform := s"rotate(${lander.rotation}, ${landerDisplayW / 2}, ${landerDisplayH / 2})",
+              transform := s"rotate(${lander.rotation}, ${landerDisplayW / 2}, ${landerDisplayH / 2})",
+            ),
           ),
         ),
-      ),
-      displaySpeedIndicator(lander)(pointerEvents := "none"),
+        displaySpeedIndicator(lander)(pointerEvents := "none"),
 
-      //    line(
+        //    line(
 //      stroke := "green",
 //      strokeWidth := "20",
 //      x1 := start.x,
@@ -385,6 +441,7 @@ object Main {
 //      x2 := end.x,
 //      y2 := end.y
 //    ),
+      ),
     )
 
   }
