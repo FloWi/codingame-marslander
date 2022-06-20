@@ -7,6 +7,9 @@ import org.scalajs.dom.Element
 import outwatch._
 import outwatch.dsl._
 import webapp.marslander.{Coord, Level}
+import webapp.simulator.Simulator
+import webapp.simulator.Simulator.PreciseState.toRoundedState
+import webapp.simulator.Simulator.{GameCommand, PreciseState, SimulationStepInput}
 import webapp.vectory.{Algorithms, Line, Vec2}
 
 // Outwatch documentation:
@@ -38,8 +41,7 @@ object Main {
     )
   }
 
-  case class LanderState(x: Int, y: Int, rotation: Int, vH: Int, vV: Int)
-  def landerSettings(state: BehaviorSubject[LanderState]) =
+  def landerSettings(state: BehaviorSubject[Simulator.State]) =
     state.map { s =>
       div(
         display.flex,
@@ -72,9 +74,9 @@ object Main {
             tpe     := "range",
             minAttr := "-90",
             maxAttr := "90",
-            value   := s.rotation.toString,
+            value   := s.rotate.toString,
             cls     := "range",
-            onInput.value.map(v => s.copy(rotation = v.toInt)) --> state,
+            onInput.value.map(v => s.copy(rotate = v.toInt)) --> state,
           ),
         ),
       )
@@ -83,19 +85,21 @@ object Main {
   def renderLevel(level: Level): VModifier = {
 
     val landerState = Subject.behavior(
-      LanderState(
-        level.landerInitialState.x,
-        level.landerInitialState.y,
-        level.landerInitialState.rotate,
-        level.landerInitialState.hSpeed,
-        level.landerInitialState.vSpeed,
+      Simulator.State(
+        x = level.landerInitialState.x,
+        y = level.landerInitialState.y,
+        rotate = level.landerInitialState.rotate,
+        hSpeed = level.landerInitialState.hSpeed,
+        vSpeed = level.landerInitialState.vSpeed,
+        power = level.landerInitialState.power,
+        fuel = level.landerInitialState.fuel,
       ),
     )
 
     val landerControlSub =
       Subject.behavior(MouseControlState(level.landerInitialState.rotate, level.landerInitialState.power))
 
-    landerState.map { s: LanderState =>
+    landerState.map { s: Simulator.State =>
       val rays = calcShipRays(s, level)
       div(
         h1(s"Level ${level.name}"),
@@ -118,8 +122,8 @@ object Main {
             h2("Lander State"),
             div(
               table(
-                thead(tr(th("x"), th("y"), th("rotation"), th("vH"), th("vV"))),
-                tbody(tr(td(s.x), td(s.y), td(s.rotation), td(s.vH), td(s.vV))),
+                thead(tr(th("x"), th("y"), th("rotation"), th("hSpeed"), th("vSpeed"))),
+                tbody(tr(td(s.x), td(s.y), td(s.rotate), td(s.hSpeed), td(s.vSpeed))),
               ),
             ),
           ),
@@ -132,7 +136,7 @@ object Main {
   }
 
   case class ShipRay(surfacePoint: Vec2, ship: Vec2, ray: Line, intersections: List[Algorithms.LineIntersection])
-  def calcShipRays(landerState: LanderState, level: Level): List[ShipRay] = {
+  def calcShipRays(landerState: Simulator.State, level: Level): List[ShipRay] = {
     val surfaceLines = level.initialState.surfaceCoords
       .sliding(2, 1)
       .toList
@@ -164,9 +168,9 @@ object Main {
 
   case class MouseControlState(angle: Int, thrust: Int)
 
-  def displaySpeedIndicator(landerSettings: LanderState) = {
+  def displaySpeedIndicator(landerSettings: Simulator.State) = {
 
-    val v               = Vec2(landerSettings.vH, landerSettings.vV)
+    val v               = Vec2(landerSettings.hSpeed, landerSettings.vSpeed)
     val l               = v.length
     val max             = 400
     val maxLength       = max.toString
@@ -188,7 +192,7 @@ object Main {
           polygon(points := "0 0, 10 3.5, 0 7"),
         ),
       ),
-      VModifier.ifTrue(landerSettings.vH != 0 || landerSettings.vV != 0) {
+      VModifier.ifTrue(landerSettings.hSpeed != 0 || landerSettings.vSpeed != 0) {
         line(
           x1                             := centerIndicator.x.toString,
           y1                             := centerIndicator.y.toString,
@@ -342,7 +346,7 @@ object Main {
 
   def renderLevelGraphic(
     level: Level,
-    lander: LanderState,
+    lander: Simulator.State,
     landerControl: BehaviorSubject[MouseControlState],
     rays: List[ShipRay],
   ) = {
@@ -365,6 +369,14 @@ object Main {
     val landerDisplayCoords = toDisplayCoord(landerCoords)
     val landerX: Int        = landerDisplayCoords.x - (landerDisplayW / 2).toInt
     val landerY: Int        = landerDisplayCoords.y - landerDisplayH.toInt
+
+    val state           = PreciseState.fromRoundedState(lander)
+    val simulationSteps = landerControl.map(s => GameCommand(s.angle, s.thrust)).map { cmd =>
+      Simulator
+        .runUntilCrashed(SimulationStepInput(level, state, cmd))
+        .map(toRoundedState)
+        .map(s => toDisplayCoord(Coord(s.x, s.y)))
+    }
 
     val ctrlSub  = Subject.behavior(MouseDragThrustControl(None, None))
     val debugSub = Subject.behavior("debug")
@@ -389,18 +401,24 @@ object Main {
           strokeWidth                               := "3",
           pointerEvents                             := "none",
         ),
-        rays.map { case ShipRay(surfacePoint, ship, ray, intersections) =>
-          val start = landerDisplayCoords
-          val end   = toDisplayCoord(Coord(surfacePoint.x.toInt, surfacePoint.y.toInt))
-          line(
-            stroke      := (if (intersections.isEmpty) "green" else "red"),
-            strokeWidth := "5",
-            x1          := start.x.toString,
-            y1          := start.y.toString,
-            x2          := end.x.toString,
-            y2          := end.y.toString,
-          )
+        simulationSteps.map { locations =>
+          locations.map { case Coord(x, y) =>
+            circle(cx := x.toString, cy := y.toString, r := "10", fill := "black", pointerEvents := "none")
+          }
         },
+//        rays.map { case ShipRay(surfacePoint, ship, ray, intersections) =>
+//          val start = landerDisplayCoords
+//          val end   = toDisplayCoord(Coord(surfacePoint.x.toInt, surfacePoint.y.toInt))
+//          line(
+//            stroke        := (if (intersections.isEmpty) "green" else "red"),
+//            strokeWidth   := "5",
+//            x1            := start.x.toString,
+//            y1            := start.y.toString,
+//            x2            := end.x.toString,
+//            y2            := end.y.toString,
+//            pointerEvents := "none",
+//          )
+//        },
         onMouseDown.map(getRelativeLocationOfMouseEventInContainer).map { relLocation =>
           MouseDragThrustControl(Some(relLocation), Some(relLocation))
         } --> ctrlSub,
@@ -411,7 +429,6 @@ object Main {
               val relLocation = getRelativeLocationOfMouseEventInContainer(evt)
               ctrl.copy(dragLocationPercent = Some(relLocation))
             }
-
           } --> ctrlSub
         },
         onMouseUp.as(MouseDragThrustControl(None, None)) --> ctrlSub,
@@ -430,7 +447,7 @@ object Main {
               height    := landerDisplayH.toString,
 //            VModifier.attr("transform-box")    := s"fill-box",
 //            VModifier.attr("transform-origin") := s"center",
-              transform := s"rotate(${lander.rotation}, ${landerDisplayW / 2}, ${landerDisplayH / 2})",
+              transform := s"rotate(${lander.rotate}, ${landerDisplayW / 2}, ${landerDisplayH / 2})",
             ),
           ),
         ),

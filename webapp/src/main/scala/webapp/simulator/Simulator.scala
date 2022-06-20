@@ -64,7 +64,18 @@ object Simulator {
 
   case class SimulationStepInput(initialState: Level, state: PreciseState, command: GameCommand)
 
-  def simulate(input: SimulationStepInput): PreciseState = {
+  def runUntilCrashed(input: SimulationStepInput): List[PreciseState] =
+    LazyList
+      .from(0)
+      .scanLeft(input.state) { (current, _) =>
+        simulate(input.copy(state = current))
+      }
+      .takeWhile { s =>
+        s.fuel >= 0 && s.x >= 0 && s.x <= Constants.gameWidth &&
+        s.y >= 0 && s.y <= Constants.gameHeight
+      }
+      .toList
+  def simulate(input: SimulationStepInput): PreciseState              = {
 
     val velocity = Vec2(input.state.hSpeed, input.state.vSpeed)
     val gravity  = Vec2.unitY.*(-Constants.g)
