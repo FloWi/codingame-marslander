@@ -87,7 +87,7 @@ object Main {
 
   def renderLevel(level: Level): VModifier = {
 
-    val initialState                          = Simulator.State(
+    val initialState = Simulator.PreciseState(
       x = level.landerInitialState.x,
       y = level.landerInitialState.y,
       rotate = level.landerInitialState.rotate,
@@ -96,16 +96,19 @@ object Main {
       power = level.landerInitialState.power,
       fuel = level.landerInitialState.fuel,
     )
+
+    val initialGameState: GameState = GameState.Initial
+
     val gameState: BehaviorSubject[GameState] =
-      Subject.behavior(GameState.Initial(PreciseState.fromRoundedState(initialState), Queue.empty))
-    val gameSettings                          = Subject.behavior(GameSettings(fps = 1))
+      Subject.behavior(initialGameState)
+    val gameSettings                          = Subject.behavior(GameSettings(fps = 5))
 
     val interval = gameState.withLatest(gameSettings).map { case (gs, settings) =>
       gs match {
-        case GameState.Paused(state, previous)  => None
-        case GameState.Running(state, previous) => Some(settings.fps)
-        case GameState.Crashed(state, previous) => None
-        case GameState.Initial(state, previous) => None
+        case GameState.Paused  => None
+        case GameState.Running => Some(settings.fps)
+        case GameState.Crashed => None
+        case GameState.Initial => None
       }
     }
 
@@ -117,19 +120,29 @@ object Main {
     val landerControlSub =
       Subject.behavior(MouseControlState(level.landerInitialState.rotate, level.landerInitialState.power))
 
-    val simulation = tick.switchMap(_ =>
-      gameState.withLatest(landerControlSub).map { case (gs, control) =>
-        gs match {
-          case gs: GameState.Paused               => gs
-          case gs: GameState.Crashed              => gs
-          case gs: GameState.Initial              => gs
-          case GameState.Running(state, previous) =>
-            val simulationStepInput = SimulationStepInput(level, state, GameCommand(control.angle, control.thrust))
-            val newState            = simulate(simulationStepInput)
-            GameState.Running(newState, previous.enqueue(state))
-        }
-      },
-    )
+    val simulation: Observable[(PreciseState, Queue[PreciseState])] =
+      tick.withLatest(landerControlSub).scan((initialState, Queue.empty[PreciseState])) {
+        case ((state, previous), (_, control)) =>
+          val simulationStepInput = SimulationStepInput(level, state, GameCommand(control.angle, control.thrust))
+          val newState            = simulate(simulationStepInput)
+          (newState, previous.enqueue(state))
+      }
+
+    simulation.unsafeForeach(gs => println(gs))
+
+//    tick.withLatest(landerControlSub).unsafeForeach { case (ms, ctrl) =>
+//      println(s"withLatest Tick Tock at $ms: $ctrl")
+//    }
+
+//    tick
+//      .withLatest(landerControlSub)
+//      .scan(2000) { case (current, (tick, ctrl)) => current - ctrl.thrust }
+//      .unsafeForeach(fuel => println(s"[${System.currentTimeMillis}] fuel left: $fuel"))
+
+//    landerControlSub.debounceMillis(1000).unsafeForeach(ctrl => println(s"debounce time: $ctrl"))
+//    landerControlSub
+//      .sampleMillis(1000)
+//      .unsafeForeach(ctrl => println(s"${System.currentTimeMillis} sampleMills time: $ctrl"))
 
 //    landerControlSub.zip(tick).unsafeForeach { case (ctrl, ms) =>
 //      println(s"zip Tick Tock $ms: $ctrl")
@@ -165,14 +178,14 @@ object Main {
           h2("Game Control"),
           div(
             gameState.map {
-              case GameState.Paused(state, previous)  =>
-                button(s"Start", onClick.as(GameState.Running(state, previous)) --> gameState)
-              case GameState.Running(state, previous) =>
-                button(s"Pause", onClick.as(GameState.Paused(state, previous)) --> gameState)
-              case GameState.Crashed(state, previous) => VModifier.empty
-              case GameState.Initial(state, previous) =>
+              case GameState.Paused  =>
+                button(s"Start", onClick.as(GameState.Running) --> gameState)
+              case GameState.Running =>
+                button(s"Pause", onClick.as(GameState.Paused) --> gameState)
+              case GameState.Crashed => VModifier.empty
+              case GameState.Initial =>
                 VModifier.empty
-                button(s"Start", onClick.as(GameState.Running(state, previous)) --> gameState)
+                button(s"Start", onClick.as(GameState.Running) --> gameState)
             },
           ),
         ),
@@ -181,23 +194,31 @@ object Main {
           landerControlSub.map { ctrl =>
             table(
               thead(tr(th("angle"), th("thrust"))),
-              tbody(tr(td(ctrl.angle), td(ctrl.thrust))),
+              tbody(tr(td(roundAt(2)(ctrl.angle)), td(roundAt(2)(ctrl.thrust)))),
             )
           },
         ),
         div(
           h2("Lander State"),
           div(
-            simulation.map(_.state).map { s =>
+            simulation.map(_._1).map { s =>
               table(
                 thead(tr(th("x"), th("y"), th("rotation"), th("hSpeed"), th("vSpeed"))),
-                tbody(tr(td(s.x), td(s.y), td(s.rotate), td(s.hSpeed), td(s.vSpeed))),
+                tbody(
+                  tr(
+                    td(roundAt(2)(s.x)),
+                    td(roundAt(2)(s.y)),
+                    td(roundAt(2)(s.rotate)),
+                    td(roundAt(2)(s.hSpeed)),
+                    td(roundAt(2)(s.vSpeed)),
+                  ),
+                ),
               )
             },
           ),
         ),
       ),
-      renderLevelGraphic(level, simulation.map(gs => toRoundedState(gs.state)), landerControlSub),
+      renderLevelGraphic(level, simulation.map(gs => toRoundedState(gs._1)), landerControlSub),
       h2("Game Input"),
       pre(level.toInputLines.mkString("\n")),
     )
@@ -452,7 +473,7 @@ object Main {
               height    := landerDisplayH.toString,
               //            VModifier.attr("transform-box")    := s"fill-box",
               //            VModifier.attr("transform-origin") := s"center",
-              transform := s"rotate(${lander.rotate}, ${landerDisplayW / 2}, ${landerDisplayH / 2})",
+              transform := s"rotate(${-lander.rotate}, ${landerDisplayW / 2}, ${landerDisplayH / 2})",
             ),
           ),
         ),
