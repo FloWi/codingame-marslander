@@ -1,16 +1,19 @@
 package webapp
 
 import cats.effect.SyncIO
-import colibri.{BehaviorSubject, Observable, Subject}
+import colibri.{BehaviorSubject, Observable, Observer, Subject}
 import com.raquo.domtypes.jsdom.defs.events.TypedTargetMouseEvent
 import org.scalajs.dom.Element
 import outwatch._
 import outwatch.dsl._
+import webapp.marslander.Game.{GameSettings, GameState}
 import webapp.marslander.{Coord, Level}
 import webapp.simulator.Simulator
-import webapp.simulator.Simulator.PreciseState.toRoundedState
-import webapp.simulator.Simulator.{GameCommand, PreciseState, SimulationStepInput}
+import webapp.simulator.Simulator.PreciseState.{fromRoundedState, toRoundedState}
+import webapp.simulator.Simulator.{simulate, GameCommand, PreciseState, SimulationStepInput}
 import webapp.vectory.{Algorithms, Line, Vec2}
+
+import scala.collection.immutable.Queue
 
 // Outwatch documentation:
 // https://outwatch.github.io/docs/readme.html
@@ -84,55 +87,120 @@ object Main {
 
   def renderLevel(level: Level): VModifier = {
 
-    val landerState = Subject.behavior(
-      Simulator.State(
-        x = level.landerInitialState.x,
-        y = level.landerInitialState.y,
-        rotate = level.landerInitialState.rotate,
-        hSpeed = level.landerInitialState.hSpeed,
-        vSpeed = level.landerInitialState.vSpeed,
-        power = level.landerInitialState.power,
-        fuel = level.landerInitialState.fuel,
-      ),
+    val initialState                          = Simulator.State(
+      x = level.landerInitialState.x,
+      y = level.landerInitialState.y,
+      rotate = level.landerInitialState.rotate,
+      hSpeed = level.landerInitialState.hSpeed,
+      vSpeed = level.landerInitialState.vSpeed,
+      power = level.landerInitialState.power,
+      fuel = level.landerInitialState.fuel,
     )
+    val gameState: BehaviorSubject[GameState] =
+      Subject.behavior(GameState.Initial(PreciseState.fromRoundedState(initialState), Queue.empty))
+    val gameSettings                          = Subject.behavior(GameSettings(fps = 1))
+
+    val interval = gameState.withLatest(gameSettings).map { case (gs, settings) =>
+      gs match {
+        case GameState.Paused(state, previous)  => None
+        case GameState.Running(state, previous) => Some(settings.fps)
+        case GameState.Crashed(state, previous) => None
+        case GameState.Initial(state, previous) => None
+      }
+    }
+
+    val tick: Observable[Long] = interval.switchMap {
+      case None      => Observable(0)
+      case Some(fps) => Observable.intervalMillis((1000.0 / fps).toInt)
+    }
 
     val landerControlSub =
       Subject.behavior(MouseControlState(level.landerInitialState.rotate, level.landerInitialState.power))
 
-    landerState.map { s: Simulator.State =>
-      val rays = calcShipRays(s, level)
-      div(
-        h1(s"Level ${level.name}"),
-        // landerSettings(landerState),
+    val simulation = tick.switchMap(_ =>
+      gameState.withLatest(landerControlSub).map { case (gs, control) =>
+        gs match {
+          case gs: GameState.Paused               => gs
+          case gs: GameState.Crashed              => gs
+          case gs: GameState.Initial              => gs
+          case GameState.Running(state, previous) =>
+            val simulationStepInput = SimulationStepInput(level, state, GameCommand(control.angle, control.thrust))
+            val newState            = simulate(simulationStepInput)
+            GameState.Running(newState, previous.enqueue(state))
+        }
+      },
+    )
 
+//    landerControlSub.zip(tick).unsafeForeach { case (ctrl, ms) =>
+//      println(s"zip Tick Tock $ms: $ctrl")
+//    }
+//
+//    tick.zip(landerControlSub).unsafeForeach { case (ctrl, ms) =>
+//      println(s"zip2 Tick Tock $ms: $ctrl")
+//    }
+
+//    tick.withLatest(landerControlSub).unsafeForeach { case (ms, ctrl) =>
+//      println(s"withLatest Tick Tock at $ms: $ctrl")
+//    }
+//
+//    tick.switchMap(_ => landerControlSub).unsafeForeach(ctrl => println(s"switchMap Tick Tock: $ctrl"))
+//    tick.combineLatest(landerControlSub).unsafeForeach { case (ms, ctrl) =>
+//      println(s"combineLatest Tick Tock $ms: $ctrl")
+//    }
+
+    // val landerState = gameState.map(gs => toRoundedState(gs.state))
+
+//    simulation.map(gs => toRoundedState(gs.state)).map { s =>
+//
+    div(
+      h1(s"Level ${level.name}"),
+      // landerSettings(landerState),
+
+      tick.map(ms => div(p(ms))),
+      div(
+        display.flex,
+        flex                   := "row",
+        VModifier.style("gap") := "3rem",
         div(
-          display.flex,
-          flex                   := "row",
-          VModifier.style("gap") := "3rem",
+          h2("Game Control"),
           div(
-            h2("Lander Control"),
-            landerControlSub.map { ctrl =>
-              table(
-                thead(tr(th("angle"), th("thrust"))),
-                tbody(tr(td(ctrl.angle), td(ctrl.thrust))),
-              )
+            gameState.map {
+              case GameState.Paused(state, previous)  =>
+                button(s"Start", onClick.as(GameState.Running(state, previous)) --> gameState)
+              case GameState.Running(state, previous) =>
+                button(s"Pause", onClick.as(GameState.Paused(state, previous)) --> gameState)
+              case GameState.Crashed(state, previous) => VModifier.empty
+              case GameState.Initial(state, previous) =>
+                VModifier.empty
+                button(s"Start", onClick.as(GameState.Running(state, previous)) --> gameState)
             },
           ),
+        ),
+        div(
+          h2("Lander Control"),
+          landerControlSub.map { ctrl =>
+            table(
+              thead(tr(th("angle"), th("thrust"))),
+              tbody(tr(td(ctrl.angle), td(ctrl.thrust))),
+            )
+          },
+        ),
+        div(
+          h2("Lander State"),
           div(
-            h2("Lander State"),
-            div(
+            simulation.map(_.state).map { s =>
               table(
                 thead(tr(th("x"), th("y"), th("rotation"), th("hSpeed"), th("vSpeed"))),
                 tbody(tr(td(s.x), td(s.y), td(s.rotate), td(s.hSpeed), td(s.vSpeed))),
-              ),
-            ),
+              )
+            },
           ),
         ),
-        renderLevelGraphic(level, s, landerControlSub, rays),
-        h2("Game Input"),
-        pre(level.toInputLines.mkString("\n")),
-      )
-    }
+      ),
+      renderLevelGraphic(level, simulation.map(gs => toRoundedState(gs.state)), landerControlSub),
+      h2("Game Input"),
+      pre(level.toInputLines.mkString("\n")),
+    )
   }
 
   case class ShipRay(surfacePoint: Vec2, ship: Vec2, ray: Line, intersections: List[Algorithms.LineIntersection])
@@ -346,9 +414,8 @@ object Main {
 
   def renderLevelGraphic(
     level: Level,
-    lander: Simulator.State,
+    lander: Observable[Simulator.State],
     landerControl: BehaviorSubject[MouseControlState],
-    rays: List[ShipRay],
   ) = {
     import svg._
     val allCoords =
@@ -357,26 +424,50 @@ object Main {
     val displayCoords = allCoords.map(toDisplayCoord)
     val pts           = displayCoords.map { case Coord(x, y) => s"$x, $y" }.mkString(" ")
 
-    val landerWidth  = 335.6
-    val landerHeight = 308.7
+    def landerStuff(lander: Simulator.State) = {
+      val landerWidth  = 335.6
+      val landerHeight = 308.7
 
-    val landerScaleFactor = 0.55
+      val landerScaleFactor = 0.55
 
-    val landerDisplayW = landerWidth * landerScaleFactor
-    val landerDisplayH = landerHeight * landerScaleFactor
+      val landerDisplayW      = landerWidth * landerScaleFactor
+      val landerDisplayH      = landerHeight * landerScaleFactor
+      val landerCoords        = Coord(lander.x, lander.y)
+      val landerDisplayCoords = toDisplayCoord(landerCoords)
+      val landerX: Int        = landerDisplayCoords.x - (landerDisplayW / 2).toInt
+      val landerY: Int        = landerDisplayCoords.y - landerDisplayH.toInt
 
-    val landerCoords        = Coord(lander.x, lander.y)
-    val landerDisplayCoords = toDisplayCoord(landerCoords)
-    val landerX: Int        = landerDisplayCoords.x - (landerDisplayW / 2).toInt
-    val landerY: Int        = landerDisplayCoords.y - landerDisplayH.toInt
-
-    val state           = PreciseState.fromRoundedState(lander)
-    val simulationSteps = landerControl.map(s => GameCommand(s.angle, s.thrust)).map { cmd =>
-      Simulator
-        .runUntilCrashed(SimulationStepInput(level, state, cmd))
-        .map(toRoundedState)
-        .map(s => toDisplayCoord(Coord(s.x, s.y)))
+      List(
+        g(
+          pointerEvents                             := "none",
+          transform                                 := s"translate($landerX, $landerY)",
+          g(
+            pointerEvents := "none",
+            image(
+              //          <image x="10" y="20" width="80" height="80" href="recursion.svg" />
+              // w: 335,6
+              // h: 308,7
+              href      := s"${Communication.assetLocation}/Lander.svg",
+              width     := landerDisplayW.toString,
+              height    := landerDisplayH.toString,
+              //            VModifier.attr("transform-box")    := s"fill-box",
+              //            VModifier.attr("transform-origin") := s"center",
+              transform := s"rotate(${lander.rotate}, ${landerDisplayW / 2}, ${landerDisplayH / 2})",
+            ),
+          ),
+        ),
+        displaySpeedIndicator(lander)(pointerEvents := "none"),
+      )
     }
+
+    val simulationSteps =
+      lander.map(s => fromRoundedState(s)).combineLatest(landerControl.map(s => GameCommand(s.angle, s.thrust))).map {
+        case (s, ctrl) =>
+          Simulator
+            .runUntilCrashed(SimulationStepInput(level, s, ctrl))
+            .map(toRoundedState)
+            .map(s => toDisplayCoord(Coord(s.x, s.y)))
+      }
 
     val ctrlSub  = Subject.behavior(MouseDragThrustControl(None, None))
     val debugSub = Subject.behavior("debug")
@@ -387,19 +478,19 @@ object Main {
         height  := canvasSize.y.toInt.toString,                          // "600",
         viewBox := s"0 0 ${viewBoxSize.x.toInt} ${viewBoxSize.y.toInt}", // "0 0 7000 3000",
         rect(
-          x                                         := "0",
-          y                                         := "0",
-          width                                     := viewBoxSize.x.toInt.toString, // "7000",
-          height                                    := viewBoxSize.y.toInt.toString, // "3000",
-          fill                                      := "hsla(200,10%,80%,0.9)",
-          pointerEvents                             := "none",
+          x             := "0",
+          y             := "0",
+          width         := viewBoxSize.x.toInt.toString, // "7000",
+          height        := viewBoxSize.y.toInt.toString, // "3000",
+          fill          := "hsla(200,10%,80%,0.9)",
+          pointerEvents := "none",
         ),
         polyline(
-          points                                    := pts,
-          fill                                      := "red",
-          stroke                                    := "black",
-          strokeWidth                               := "3",
-          pointerEvents                             := "none",
+          points        := pts,
+          fill          := "red",
+          stroke        := "black",
+          strokeWidth   := "3",
+          pointerEvents := "none",
         ),
         simulationSteps.map { locations =>
           locations.map { case Coord(x, y) =>
@@ -433,25 +524,7 @@ object Main {
         },
         onMouseUp.as(MouseDragThrustControl(None, None)) --> ctrlSub,
         thrustVectoringControl(ctrlSub, landerControl),
-        g(
-          pointerEvents                             := "none",
-          transform                                 := s"translate($landerX, $landerY)",
-          g(
-            pointerEvents := "none",
-            image(
-//          <image x="10" y="20" width="80" height="80" href="recursion.svg" />
-              // w: 335,6
-              // h: 308,7
-              href      := s"${Communication.assetLocation}/Lander.svg",
-              width     := landerDisplayW.toString,
-              height    := landerDisplayH.toString,
-//            VModifier.attr("transform-box")    := s"fill-box",
-//            VModifier.attr("transform-origin") := s"center",
-              transform := s"rotate(${lander.rotate}, ${landerDisplayW / 2}, ${landerDisplayH / 2})",
-            ),
-          ),
-        ),
-        displaySpeedIndicator(lander)(pointerEvents := "none"),
+        lander.map(landerStuff),
 
 //    line(
 //      stroke := "green",

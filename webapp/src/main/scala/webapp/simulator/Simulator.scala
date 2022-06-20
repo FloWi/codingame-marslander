@@ -59,7 +59,6 @@ object Simulator {
     val gameHeight                = 3000
     val maxThrustTurnDelta        = 1
     val maxRotationTurnDelta      = 15
-
   }
 
   case class SimulationStepInput(initialState: Level, state: PreciseState, command: GameCommand)
