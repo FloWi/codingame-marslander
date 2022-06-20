@@ -121,7 +121,7 @@ object Main {
       Subject.behavior(MouseControlState(level.landerInitialState.rotate, level.landerInitialState.power))
 
     val simulation: Observable[(PreciseState, Queue[PreciseState])] =
-      tick.withLatest(landerControlSub).scan((initialState, Queue.empty[PreciseState])) {
+      tick.withLatest(landerControlSub).scan0((initialState, Queue.empty[PreciseState])) {
         case ((state, previous), (_, control)) =>
           val simulationStepInput = SimulationStepInput(level, state, GameCommand(control.angle, control.thrust))
           val newState            = simulate(simulationStepInput)
