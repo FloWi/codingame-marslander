@@ -62,26 +62,30 @@ object Main {
   }
 
   def renderUi(allLevels: List[Level]) = {
-    val selectedLevel  = Subject.behavior(allLevels.lastOption)
-    val levelSelection = div(
-      position.absolute,
-      right := "1rem",
-      top   := "1rem",
-      allHighscores(allLevels).map { highScores =>
-        table(
-          thead(
-            tr(th("Level"), th("Action"), th("Your Highscore")),
-          ),
-          tbody(highScores.map { case HighScore(level, maybeScore) =>
-            tr(
-              td(level.name),
-              td(button("Play", onClick.as(Some(level)) --> selectedLevel)),
-              td(maybeScore),
-            )
-          }),
-        )
+    val selectedLevel = Subject.behavior(allLevels.lastOption)
 
-      },
+    val refreshHighscoresSub = Subject.behavior(())
+
+    val levelSelection = refreshHighscoresSub.map(_ =>
+      div(
+        position.absolute,
+        right := "1rem",
+        top   := "1rem",
+        allHighscores(allLevels).map { highScores =>
+          table(
+            thead(
+              tr(th("Level"), th("Action"), th("Your Highscore")),
+            ),
+            tbody(highScores.map { case HighScore(level, maybeScore) =>
+              tr(
+                td(level.name),
+                td(button("Play", onClick.as(Some(level)) --> selectedLevel)),
+                td(maybeScore),
+              )
+            }),
+          )
+        },
+      ),
     )
 
     val levelDisplay = selectedLevel.mapEffect {
@@ -90,7 +94,7 @@ object Main {
     }.map {
       case Some((level, maybeRecorder)) =>
         VModifier(allHighscores(allLevels).map { highScores =>
-          renderLevel(level, maybeRecorder, selectedLevel)
+          renderLevel(level, maybeRecorder, selectedLevel, refreshHighscoresSub)
         })
 
       case None => VModifier.empty
@@ -146,6 +150,7 @@ object Main {
     level: Level,
     maybeRecorder: Option[FlightRecoder],
     selectedLevelSub: BehaviorSubject[Option[Level]],
+    refreshHighScoreSub: BehaviorSubject[Unit],
   ): VModifier = {
 
     val initialState = PreciseState(
@@ -159,8 +164,7 @@ object Main {
     )
 
     val best = maybeRecorder.map { rec =>
-      val bestPath  = Simulator.runFlightRecorder(level, rec)
-      val highScore = rec.score
+      val bestPath = Simulator.runFlightRecorder(level, rec)
       (rec, bestPath)
     }
 
@@ -212,7 +216,9 @@ object Main {
             case EvaluationResult.Landed =>
               val currentScore = score(level, state)
               if (currentScore > best.map(_._1.score).getOrElse(0)) {
-                storeBestRecording(level, FlightRecoder(currentScore, previous.map(_._2).toList)).as(msg)
+                storeBestRecording(level, FlightRecoder(currentScore, previous.map(_._2).toList))
+                  .map(_ => refreshHighScoreSub.unsafeOnNext(()))
+                  .as(msg)
               }
               else IO(msg)
             case _                       => IO(msg)
