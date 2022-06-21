@@ -218,19 +218,24 @@ object Main {
                 ),
               ),
               tbody(
-                previous.zipWithIndex.map { case ((s, gc), tick) =>
-                  tr(
-                    td(tick),
-                    td(roundAt(2)(s.x)),
-                    td(roundAt(2)(s.y)),
-                    td(roundAt(2)(s.rotate)),
-                    td(roundAt(2)(s.hSpeed)),
-                    td(roundAt(2)(s.vSpeed)),
-                    td(roundAt(2)(gc.power)),
-                    td(roundAt(2)(gc.rotation)),
-                  )
+                previous.map { case (oldS, gc) => (oldS, Some(gc)) }
+                  .enqueue(s -> None)
+                  .zipWithIndex
+                  .map { case ((s, gc), tick) =>
+                    val powerStr    = gc.map(_.power.toString).getOrElse("---")
+                    val rotationStr = gc.map(_.rotation.toString).getOrElse("---")
+                    tr(
+                      td(tick),
+                      td(roundAt(2)(s.x)),
+                      td(roundAt(2)(s.y)),
+                      td(roundAt(2)(s.rotate)),
+                      td(roundAt(2)(s.hSpeed)),
+                      td(roundAt(2)(s.vSpeed)),
+                      td(powerStr),
+                      td(rotationStr),
+                    )
 
-                },
+                  },
               ),
             ),
           ),
