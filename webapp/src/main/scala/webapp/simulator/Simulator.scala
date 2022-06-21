@@ -22,7 +22,14 @@ object Simulator {
         }
       }
 
-      def hasLanded: Boolean = false
+      def hasLanded: Boolean = {
+        val isAbove                  = x <= level.landingArea.end.x && x >= level.landingArea.start.x
+        val isAtHeight               = y <= level.landingArea.start.y + Constants.maxLandingVerticalSpeed
+        val isSlowEnoughHorizontally = math.abs(hSpeed) <= Constants.maxLandingHorizontalSpeed
+        val isSlowEnoughVertically   = math.abs(vSpeed) <= Constants.maxLandingVerticalSpeed
+        val isCorrectRotation        = rotate == 0
+        isAbove && isAtHeight && isSlowEnoughHorizontally && isSlowEnoughVertically && isCorrectRotation
+      }
 
       if (y < 0 || y > Constants.gameHeight || x < 0 || x > Constants.gameWidth)
         OffLimits

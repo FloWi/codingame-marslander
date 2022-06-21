@@ -24,6 +24,10 @@ case class Level(name: String, initialState: Surface, landerInitialState: Lander
       Line(first.x, first.y, second.x, second.y)
     }
 
+  val landingArea: Line = surfaceLines.find { l =>
+    l.end.y == l.start.y && math.abs(l.end.x - l.start.x) >= 1000
+  }.get
+
 }
 case class LanderInitialState(x: Int, y: Int, hSpeed: Int, vSpeed: Int, fuel: Int, rotate: Int, power: Int)
 case class Surface(surfaceN: Int, surfaceCoords: List[Coord])

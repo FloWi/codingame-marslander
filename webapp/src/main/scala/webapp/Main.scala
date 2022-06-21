@@ -168,7 +168,7 @@ object Main {
                       case EvaluationResult.AllClear  => p("this shouldn't happen")
                       case EvaluationResult.Crashed   => p("Houston, we had a problem...")
                       case EvaluationResult.OffLimits => p("Off script is ok, but off screen...?")
-                      case EvaluationResult.Landed    => p("🎉")
+                      case EvaluationResult.Landed    => p(fontSize := "3rem", "🎉")
                     }
 
                 },
