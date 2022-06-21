@@ -1,16 +1,17 @@
 package webapp
 
-import cats.effect.SyncIO
-import colibri.{BehaviorSubject, Observable, Observer, Subject}
+import cats.effect.{IO, SyncIO}
+import colibri.{BehaviorSubject, Observable, Subject}
 import com.raquo.domtypes.jsdom.defs.events.TypedTargetMouseEvent
+import io.circe.{Decoder, Encoder}
 import org.scalajs.dom.Element
 import outwatch._
 import outwatch.dsl._
 import webapp.marslander.Game.{GameSettings, GameState}
 import webapp.marslander.{Coord, Level}
 import webapp.simulator.Simulator
-import webapp.simulator.Simulator.PreciseState.{fromRoundedState, toRoundedState}
-import webapp.simulator.Simulator.{simulate, EvaluationResult, GameCommand, PreciseState, SimulationStepInput}
+import webapp.simulator.Simulator.PreciseState.toRoundedState
+import webapp.simulator.Simulator._
 import webapp.vectory.{Algorithms, Line, Vec2}
 
 import scala.collection.immutable.Queue
@@ -28,15 +29,71 @@ object Main {
       Communication.getLevels.map(renderUi),
     )
 
+  case class FlightRecoder(score: Int, commands: List[GameCommand])
+
+  object FlightRecoder {
+    implicit val landerInitialStateDecoder: Decoder[FlightRecoder] = io.circe.generic.semiauto.deriveDecoder
+    implicit val landerInitialStateEncoder: Encoder[FlightRecoder] = io.circe.generic.semiauto.deriveEncoder
+  }
+
+  case class HighScore(level: Level, score: Option[Int])
+
+  def allHighscores(allLevels: List[Level]): IO[List[HighScore]] = {
+    import cats.implicits._
+    allLevels.traverse { l =>
+      loadBestRecording(l).map(recorder => HighScore(l, recorder.map(_.score)))
+    }
+  }
+
+  def loadBestRecording(level: Level): IO[Option[FlightRecoder]] =
+    IO(
+      Option(org.scalajs.dom.window.localStorage.getItem(localStorageName(level)))
+        .flatMap(io.circe.parser.decode[FlightRecoder](_).toOption),
+    )
+
+  def localStorageName(level: Level): String =
+    s"level-${level.name}"
+
+  def storeBestRecording(level: Level, flightRecoder: FlightRecoder): IO[Unit] = {
+    import io.circe.syntax._
+    IO(
+      org.scalajs.dom.window.localStorage.setItem(localStorageName(level), flightRecoder.asJson.noSpacesSortKeys),
+    )
+  }
+
   def renderUi(allLevels: List[Level]) = {
     val selectedLevel  = Subject.behavior(allLevels.lastOption)
-    val levelSelection = div(allLevels.map { level =>
-      button(s"level ${level.name}", onClick.as(Some(level)) --> selectedLevel)
-    })
+    val levelSelection = div(
+      position.absolute,
+      right := "1rem",
+      top   := "1rem",
+      allHighscores(allLevels).map { highScores =>
+        table(
+          thead(
+            tr(th("Level"), th("Action"), th("Your Highscore")),
+          ),
+          tbody(highScores.map { case HighScore(level, maybeScore) =>
+            tr(
+              td(level.name),
+              td(button("Play", onClick.as(Some(level)) --> selectedLevel)),
+              td(maybeScore),
+            )
+          }),
+        )
 
-    val levelDisplay = selectedLevel.map {
-      case Some(level) => renderLevel(level)
-      case None        => VModifier.empty
+      },
+    )
+
+    val levelDisplay = selectedLevel.mapEffect {
+      case Some(level) => loadBestRecording(level).map(rec => Some(level -> rec))
+      case None        => IO.pure(None)
+    }.map {
+      case Some((level, maybeRecorder)) =>
+        VModifier(allHighscores(allLevels).map { highScores =>
+          renderLevel(level, maybeRecorder, selectedLevel)
+        })
+
+      case None => VModifier.empty
     }
     div(
       levelSelection,
@@ -85,7 +142,11 @@ object Main {
       )
     }
 
-  def renderLevel(level: Level): VModifier = {
+  def renderLevel(
+    level: Level,
+    maybeRecorder: Option[FlightRecoder],
+    selectedLevelSub: BehaviorSubject[Option[Level]],
+  ): VModifier = {
 
     val initialState = PreciseState(
       x = level.landerInitialState.x,
@@ -96,6 +157,12 @@ object Main {
       power = level.landerInitialState.power,
       fuel = level.landerInitialState.fuel,
     )
+
+    val best = maybeRecorder.map { rec =>
+      val bestPath  = Simulator.runFlightRecorder(level, rec)
+      val highScore = rec.score
+      (rec, bestPath)
+    }
 
     val initialGameState: GameState = GameState.Paused
 
@@ -119,7 +186,7 @@ object Main {
     val landerControlSub =
       Subject.behavior(MouseControlState(level.landerInitialState.rotate, level.landerInitialState.power))
 
-    val simulation: Observable[(Long, PreciseState, Queue[(PreciseState, GameCommand)])] =
+    val simulation: Observable[((Long, PreciseState, Queue[(PreciseState, GameCommand)]), EvaluationResult)] =
       tick
         .withLatest(landerControlSub)
         .scan0((0L, initialState, Queue.empty[(PreciseState, GameCommand)])) {
@@ -130,11 +197,26 @@ object Main {
             (tickMs, newState, previous.enqueue((state, gameCommand)))
         }
         .map { case msg @ (_, current, previous) =>
-          current.evaluate(level, previous.lastOption.map(_._1)) match {
+          msg -> current.evaluate(level, previous.lastOption.map(_._1))
+        }
+        .map { case msg @ ((_, current, previous), result) =>
+          result match {
             case EvaluationResult.AllClear =>
-            case bad                       => gameState.unsafeOnNext(GameState.Stopped(bad))
+            case other                     =>
+              gameState.unsafeOnNext(GameState.Stopped(other))
           }
           msg
+        }
+        .mapEffect { case msg @ ((_, state, previous), result) =>
+          result match {
+            case EvaluationResult.Landed =>
+              val currentScore = score(level, state)
+              if (currentScore > best.map(_._1.score).getOrElse(0)) {
+                storeBestRecording(level, FlightRecoder(currentScore, previous.map(_._2).toList)).as(msg)
+              }
+              else IO(msg)
+            case _                       => IO(msg)
+          }
         }
         .debugLog("Simulation")
 //        .via(simulationState.contramap[(Long, PreciseState, Queue[PreciseState])] { case (_, s, _) =>
@@ -151,8 +233,13 @@ object Main {
 
     div(
       h1(s"Level ${level.name}"),
-      simulation.map { case (_, s, previous) =>
+      simulation.map { case ((_, s, previous), result) =>
         VModifier(
+          h2("Score"),
+          table(
+            thead(tr(th(textAlign.right, "Score"), th(textAlign.right, "Highscore"))),
+            tbody(tr(td(textAlign.right, score(level, s)), td(textAlign.right, best.map(_._1.score)))),
+          ),
           div(
             display.flex,
             flex                   := "row",
@@ -160,19 +247,24 @@ object Main {
             div(
               h2("Game Control"),
               div(
-                gameState.map {
-                  case GameState.Paused          =>
-                    button(s"Start", onClick.as(GameState.Running) --> gameState)
-                  case GameState.Running         =>
-                    button(s"Pause", onClick.as(GameState.Paused) --> gameState)
-                  case GameState.Stopped(reason) =>
-                    reason match {
-                      case EvaluationResult.AllClear  => p("this shouldn't happen")
-                      case EvaluationResult.Crashed   => p("Houston, we had a problem...")
-                      case EvaluationResult.OffLimits => p("Off script is ok, but off screen...?")
-                      case EvaluationResult.Landed    => p(fontSize := "2.5rem", "🎉")
-                    }
-
+                gameState.map { gs =>
+                  val gsSpecific = gs match {
+                    case GameState.Paused          =>
+                      button(s"Start", onClick.as(GameState.Running) --> gameState)
+                    case GameState.Running         =>
+                      button(s"Pause", onClick.as(GameState.Paused) --> gameState)
+                    case GameState.Stopped(reason) =>
+                      reason match {
+                        case EvaluationResult.AllClear  => p("this shouldn't happen")
+                        case EvaluationResult.Crashed   => p("Houston, we had a problem...")
+                        case EvaluationResult.OffLimits => p("Off script is ok, but off screen...?")
+                        case EvaluationResult.Landed    => p(fontSize := "2.5rem", "🎉")
+                      }
+                  }
+                  VModifier(
+                    gsSpecific,
+                    button(s"Restart", onClick.as(Some(level)) --> selectedLevelSub),
+                  )
                 },
               ),
             ),
@@ -220,7 +312,7 @@ object Main {
               ),
             ),
           ),
-          renderLevelGraphic(level, s, previous.map(_._1), landerControlSub),
+          renderLevelGraphic(level, s, previous.map(_._1), landerControlSub, best.map(_._2).getOrElse(List.empty)),
           h2("Game Log"),
           div(
             table(
@@ -481,6 +573,7 @@ object Main {
     lander: PreciseState,
     previous: Queue[PreciseState],
     landerControl: BehaviorSubject[MouseControlState],
+    highScorePath: List[PreciseState],
   ) = {
     import svg._
     val allCoords =
@@ -566,9 +659,15 @@ object Main {
           .map(s => toDisplayCoord(Coord(s.x, s.y)))
           .map { case Coord(x, y) =>
             circle(cx := x.toString, cy := y.toString, r := "10", fill := "lightgreen", pointerEvents := "none")
-
           },
-//        rays.map { case ShipRay(surfacePoint, ship, ray, intersections) =>
+        highScorePath
+          .map(toRoundedState)
+          .map(s => toDisplayCoord(Coord(s.x, s.y)))
+          .map { case Coord(x, y) =>
+            circle(cx := x.toString, cy := y.toString, r := "5", fill := "darkred", pointerEvents := "none")
+          },
+
+        //        rays.map { case ShipRay(surfacePoint, ship, ray, intersections) =>
 //          val start = landerDisplayCoords
 //          val end   = toDisplayCoord(Coord(surfacePoint.x.toInt, surfacePoint.y.toInt))
 //          line(

@@ -1,5 +1,7 @@
 package webapp.simulator
 
+import io.circe.{Decoder, Encoder}
+import webapp.Main.FlightRecoder
 import webapp.marslander.Level
 import webapp.simulator.Simulator.EvaluationResult.{AllClear, Crashed, Landed, OffLimits}
 import webapp.vectory.{Line, Vec2}
@@ -84,6 +86,9 @@ object Simulator {
   object GameCommand {
     def parse(str: String): GameCommand =
       str.split(" ") match { case Array(rotation, thrust) => GameCommand(rotation.toInt, thrust.toInt) }
+
+    implicit val gameCommandDecoder: Decoder[GameCommand] = io.circe.generic.semiauto.deriveDecoder
+    implicit val gameCommandEncoder: Encoder[GameCommand] = io.circe.generic.semiauto.deriveEncoder
   }
 
   object Constants {
@@ -141,6 +146,23 @@ object Simulator {
     )
   }
 
+  def runFlightRecorder(level: Level, flightRecoder: FlightRecoder): List[PreciseState] = {
+    val initialState = PreciseState(
+      x = level.landerInitialState.x,
+      y = level.landerInitialState.y,
+      rotate = level.landerInitialState.rotate,
+      hSpeed = level.landerInitialState.hSpeed,
+      vSpeed = level.landerInitialState.vSpeed,
+      power = level.landerInitialState.power,
+      fuel = level.landerInitialState.fuel,
+    )
+
+    val result =
+      flightRecoder.commands.scanLeft(initialState)((state, gc) => simulate(SimulationStepInput(level, state, gc)))
+    assert(result.last.fuel == flightRecoder.score)
+    result
+  }
+
   def calcNewRotation(oldRotation: Int, requestedRotation: Int): Int = {
     // -90 --> 90
 
@@ -185,5 +207,8 @@ object Simulator {
     else newThrust
 
   }
+
+  def score(level: Level, state: PreciseState): Int =
+    state.fuel
 
 }
