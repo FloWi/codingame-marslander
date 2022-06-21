@@ -43,7 +43,7 @@
         }
       }
     },
-    "name": "2-1.log",
+    "name": "2-1",
     "landerInitialState": {
       "x": 2500,
       "y": 2700,
@@ -110,7 +110,7 @@
         }
       }
     },
-    "name": "2-2.log",
+    "name": "2-2",
     "landerInitialState": {
       "x": 6500,
       "y": 2800,
@@ -165,7 +165,7 @@
         }
       }
     },
-    "name": "2-3.log",
+    "name": "2-3",
     "landerInitialState": {
       "x": 6500,
       "y": 2800,
@@ -272,7 +272,7 @@
         }
       }
     },
-    "name": "2-4.log",
+    "name": "2-4",
     "landerInitialState": {
       "x": 500,
       "y": 2700,
@@ -379,7 +379,7 @@
         }
       }
     },
-    "name": "2-5.log",
+    "name": "2-5",
     "landerInitialState": {
       "x": 6500,
       "y": 2700,
@@ -494,7 +494,7 @@
         }
       }
     },
-    "name": "3-1.log",
+    "name": "3-1",
     "landerInitialState": {
       "x": 6500,
       "y": 2600,
@@ -593,7 +593,7 @@
         }
       }
     },
-    "name": "3-2.log",
+    "name": "3-2",
     "landerInitialState": {
       "x": 6500,
       "y": 2000,

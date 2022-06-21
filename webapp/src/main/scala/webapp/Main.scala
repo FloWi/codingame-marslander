@@ -147,6 +147,8 @@ object Main {
 //          }
 //        })
 
+    def formatNum(n: Double): String = f"$n%1.2f"
+
     div(
       h1(s"Level ${level.name}"),
       simulation.map { case (_, s, previous) =>
@@ -178,8 +180,13 @@ object Main {
               h2("Lander Control"),
               landerControlSub.map { ctrl =>
                 table(
-                  thead(tr(th("angle"), th("thrust"))),
-                  tbody(tr(td(roundAt(2)(ctrl.angle)), td(roundAt(2)(ctrl.thrust)))),
+                  thead(tr(th(textAlign.right, "angle"), th(textAlign.right, "thrust"))),
+                  tbody(
+                    tr(
+                      td(textAlign.right, width := "50%", fontFamily := "monospace", roundAt(2)(ctrl.angle)),
+                      td(textAlign.right, width := "50%", fontFamily := "monospace", roundAt(2)(ctrl.thrust)),
+                    ),
+                  ),
                 )
               },
             ),
@@ -187,14 +194,18 @@ object Main {
               h2("Lander State"),
               div(
                 table(
-                  thead(tr(th("x"), th("y"), th("rotation"), th("hSpeed"), th("vSpeed"))),
+                  thead(
+                    tr(th("x"), th("y"), th("rotation"), th("power"), th("fuel"), th("hSpeed"), th("vSpeed")),
+                  ),
                   tbody(
                     tr(
-                      td(roundAt(2)(s.x)),
-                      td(roundAt(2)(s.y)),
-                      td(roundAt(2)(s.rotate)),
-                      td(roundAt(2)(s.hSpeed)),
-                      td(roundAt(2)(s.vSpeed)),
+                      td(textAlign.right, width := "12.5%", fontFamily := "monospace", formatNum(roundAt(2)(s.x))),
+                      td(textAlign.right, width := "12.5%", fontFamily := "monospace", formatNum(roundAt(2)(s.y))),
+                      td(textAlign.right, width := "12.5%", fontFamily := "monospace", s.rotate),
+                      td(textAlign.right, width := "12.5%", fontFamily := "monospace", s.power),
+                      td(textAlign.right, width := "12.5%", fontFamily := "monospace", s.fuel),
+                      td(textAlign.right, width := "12.5%", fontFamily := "monospace", formatNum(roundAt(2)(s.hSpeed))),
+                      td(textAlign.right, width := "12.5%", fontFamily := "monospace", formatNum(roundAt(2)(s.vSpeed))),
                     ),
                   ),
                 ),
@@ -207,14 +218,16 @@ object Main {
             table(
               thead(
                 tr(
-                  th("tick"),
-                  th("x"),
-                  th("y"),
-                  th("rotation"),
-                  th("hSpeed"),
-                  th("vSpeed"),
-                  th("power cmd"),
-                  th("rotation cmd"),
+                  th(textAlign.right, "tick"),
+                  th(textAlign.right, "x"),
+                  th(textAlign.right, "y"),
+                  th(textAlign.right, "rotation"),
+                  th(textAlign.right, "power"),
+                  th(textAlign.right, "fuel"),
+                  th(textAlign.right, "hSpeed"),
+                  th(textAlign.right, "vSpeed"),
+                  th(textAlign.right, "power cmd"),
+                  th(textAlign.right, "rotation cmd"),
                 ),
               ),
               tbody(
@@ -222,17 +235,19 @@ object Main {
                   .enqueue(s -> None)
                   .zipWithIndex
                   .map { case ((s, gc), tick) =>
-                    val powerStr    = gc.map(_.power.toString).getOrElse("---")
-                    val rotationStr = gc.map(_.rotation.toString).getOrElse("---")
+                    val powerStr    = gc.map(x => x.power.toString).getOrElse("---")
+                    val rotationStr = gc.map(x => x.rotation.toString).getOrElse("---")
                     tr(
-                      td(tick),
-                      td(roundAt(2)(s.x)),
-                      td(roundAt(2)(s.y)),
-                      td(roundAt(2)(s.rotate)),
-                      td(roundAt(2)(s.hSpeed)),
-                      td(roundAt(2)(s.vSpeed)),
-                      td(powerStr),
-                      td(rotationStr),
+                      td(textAlign.right, width := "10%", fontFamily := "monospace", tick),
+                      td(textAlign.right, width := "10%", fontFamily := "monospace", formatNum(roundAt(2)(s.x))),
+                      td(textAlign.right, width := "10%", fontFamily := "monospace", formatNum(roundAt(2)(s.y))),
+                      td(textAlign.right, width := "10%", fontFamily := "monospace", formatNum(roundAt(2)(s.rotate))),
+                      td(textAlign.right, width := "10%", fontFamily := "monospace", s.power),
+                      td(textAlign.right, width := "10%", fontFamily := "monospace", s.fuel),
+                      td(textAlign.right, width := "10%", fontFamily := "monospace", formatNum(roundAt(2)(s.hSpeed))),
+                      td(textAlign.right, width := "10%", fontFamily := "monospace", formatNum(roundAt(2)(s.vSpeed))),
+                      td(textAlign.right, width := "10%", fontFamily := "monospace", powerStr),
+                      td(textAlign.right, width := "10%", fontFamily := "monospace", rotationStr),
                     )
 
                   },
