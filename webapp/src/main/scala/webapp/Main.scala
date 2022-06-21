@@ -195,7 +195,15 @@ object Main {
               div(
                 table(
                   thead(
-                    tr(th("x"), th("y"), th("rotation"), th("power"), th("fuel"), th("hSpeed"), th("vSpeed")),
+                    tr(
+                      th(textAlign.right, "x"),
+                      th(textAlign.right, "y"),
+                      th(textAlign.right, "rotation"),
+                      th(textAlign.right, "power"),
+                      th(textAlign.right, "fuel"),
+                      th(textAlign.right, "hSpeed"),
+                      th(textAlign.right, "vSpeed"),
+                    ),
                   ),
                   tbody(
                     tr(
@@ -212,7 +220,7 @@ object Main {
               ),
             ),
           ),
-          renderLevelGraphic(level, s, landerControlSub),
+          renderLevelGraphic(level, s, previous.map(_._1), landerControlSub),
           h2("Game Log"),
           div(
             table(
@@ -249,7 +257,6 @@ object Main {
                       td(textAlign.right, width := "10%", fontFamily := "monospace", powerStr),
                       td(textAlign.right, width := "10%", fontFamily := "monospace", rotationStr),
                     )
-
                   },
               ),
             ),
@@ -384,7 +391,7 @@ object Main {
           val normalized       = clamp(myRound(25)((lengthRatio * 100).toInt), 0, 100) // [0, 25, 50, 75, 100]
           val normalizedLength = normalized / 100.0 * maxLength
 
-          val thrustAngle    = thrustVector.angle
+          val thrustAngle    = thrustVector.copy(x = thrustVector.x).angle
           val thrustAngleDeg = math.round(thrustAngle.toDegrees) // -180 - +180
           val clampedAngle   = thrustAngleDeg
 
@@ -405,7 +412,7 @@ object Main {
 //              |val clampedAngle           = $clampedAngle
 //              |""".stripMargin.trim)
 
-          ctrlSub.unsafeOnNext(MouseControlState(angle = (clampedAngle + 90).toInt, thrust = normalized / 25))
+          ctrlSub.unsafeOnNext(MouseControlState(angle = (-1 * (clampedAngle + 90)).toInt, thrust = normalized / 25))
 
           svg(
             x             := (start.x - controlSize.x / 2).toInt.toString,                                 // "0",
@@ -472,6 +479,7 @@ object Main {
   def renderLevelGraphic(
     level: Level,
     lander: PreciseState,
+    previous: Queue[PreciseState],
     landerControl: BehaviorSubject[MouseControlState],
   ) = {
     import svg._
@@ -553,6 +561,13 @@ object Main {
             circle(cx := x.toString, cy := y.toString, r := "10", fill := "black", pointerEvents := "none")
           }
         },
+        previous
+          .map(toRoundedState)
+          .map(s => toDisplayCoord(Coord(s.x, s.y)))
+          .map { case Coord(x, y) =>
+            circle(cx := x.toString, cy := y.toString, r := "10", fill := "lightgreen", pointerEvents := "none")
+
+          },
 //        rays.map { case ShipRay(surfacePoint, ship, ray, intersections) =>
 //          val start = landerDisplayCoords
 //          val end   = toDisplayCoord(Coord(surfacePoint.x.toInt, surfacePoint.y.toInt))
