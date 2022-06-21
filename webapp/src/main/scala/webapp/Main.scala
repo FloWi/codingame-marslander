@@ -10,7 +10,7 @@ import webapp.marslander.Game.{GameSettings, GameState}
 import webapp.marslander.{Coord, Level}
 import webapp.simulator.Simulator
 import webapp.simulator.Simulator.PreciseState.{fromRoundedState, toRoundedState}
-import webapp.simulator.Simulator.{simulate, GameCommand, PreciseState, SimulationStepInput}
+import webapp.simulator.Simulator.{simulate, EvaluationResult, GameCommand, PreciseState, SimulationStepInput}
 import webapp.vectory.{Algorithms, Line, Vec2}
 
 import scala.collection.immutable.Queue
@@ -87,7 +87,7 @@ object Main {
 
   def renderLevel(level: Level): VModifier = {
 
-    val initialState = Simulator.PreciseState(
+    val initialState = PreciseState(
       x = level.landerInitialState.x,
       y = level.landerInitialState.y,
       rotate = level.landerInitialState.rotate,
@@ -97,7 +97,7 @@ object Main {
       fuel = level.landerInitialState.fuel,
     )
 
-    val initialGameState: GameState = GameState.Initial
+    val initialGameState: GameState = GameState.Paused
 
     val gameState: BehaviorSubject[GameState] =
       Subject.behavior(initialGameState)
@@ -105,140 +105,153 @@ object Main {
 
     val interval = gameState.withLatest(gameSettings).map { case (gs, settings) =>
       gs match {
-        case GameState.Paused  => None
-        case GameState.Running => Some(settings.fps)
-        case GameState.Crashed => None
-        case GameState.Initial => None
+        case GameState.Stopped(_) => None
+        case GameState.Paused     => None
+        case GameState.Running    => Some(settings.fps)
       }
     }
 
     val tick: Observable[Long] = interval.switchMap {
-      case None      => Observable(0)
+      case None      => Observable.fromIterable(List.empty)
       case Some(fps) => Observable.intervalMillis((1000.0 / fps).toInt)
     }
 
     val landerControlSub =
       Subject.behavior(MouseControlState(level.landerInitialState.rotate, level.landerInitialState.power))
 
-    val simulation: Observable[(PreciseState, Queue[PreciseState])] =
-      tick.withLatest(landerControlSub).scan0((initialState, Queue.empty[PreciseState])) {
-        case ((state, previous), (_, control)) =>
-          val simulationStepInput = SimulationStepInput(level, state, GameCommand(control.angle, control.thrust))
-          val newState            = simulate(simulationStepInput)
-          (newState, previous.enqueue(state))
-      }
+    val simulation: Observable[(Long, PreciseState, Queue[(PreciseState, GameCommand)])] =
+      tick
+        .withLatest(landerControlSub)
+        .scan0((0L, initialState, Queue.empty[(PreciseState, GameCommand)])) {
+          case ((_, state, previous), (tickMs, control)) =>
+            val gameCommand         = GameCommand(control.angle, control.thrust)
+            val simulationStepInput = SimulationStepInput(level, state, gameCommand)
+            val newState            = simulate(simulationStepInput)
+            (tickMs, newState, previous.enqueue((state, gameCommand)))
+        }
+        .map { case msg @ (_, current, previous) =>
+          current.evaluate(level, previous.lastOption.map(_._1)) match {
+            case EvaluationResult.AllClear =>
+            case bad                       => gameState.unsafeOnNext(GameState.Stopped(bad))
+          }
+          msg
+        }
+        .debugLog("Simulation")
+//        .via(simulationState.contramap[(Long, PreciseState, Queue[PreciseState])] { case (_, s, _) =>
+//          if (s.y < 0) {
+//            println("CRASHED")
+//            SimulationState.Crashed
+//          }
+//          else {
+//            SimulationState.AllClear
+//          }
+//        })
 
-    simulation.unsafeForeach(gs => println(gs))
-
-//    tick.withLatest(landerControlSub).unsafeForeach { case (ms, ctrl) =>
-//      println(s"withLatest Tick Tock at $ms: $ctrl")
-//    }
-
-//    tick
-//      .withLatest(landerControlSub)
-//      .scan(2000) { case (current, (tick, ctrl)) => current - ctrl.thrust }
-//      .unsafeForeach(fuel => println(s"[${System.currentTimeMillis}] fuel left: $fuel"))
-
-//    landerControlSub.debounceMillis(1000).unsafeForeach(ctrl => println(s"debounce time: $ctrl"))
-//    landerControlSub
-//      .sampleMillis(1000)
-//      .unsafeForeach(ctrl => println(s"${System.currentTimeMillis} sampleMills time: $ctrl"))
-
-//    landerControlSub.zip(tick).unsafeForeach { case (ctrl, ms) =>
-//      println(s"zip Tick Tock $ms: $ctrl")
-//    }
-//
-//    tick.zip(landerControlSub).unsafeForeach { case (ctrl, ms) =>
-//      println(s"zip2 Tick Tock $ms: $ctrl")
-//    }
-
-//    tick.withLatest(landerControlSub).unsafeForeach { case (ms, ctrl) =>
-//      println(s"withLatest Tick Tock at $ms: $ctrl")
-//    }
-//
-//    tick.switchMap(_ => landerControlSub).unsafeForeach(ctrl => println(s"switchMap Tick Tock: $ctrl"))
-//    tick.combineLatest(landerControlSub).unsafeForeach { case (ms, ctrl) =>
-//      println(s"combineLatest Tick Tock $ms: $ctrl")
-//    }
-
-    // val landerState = gameState.map(gs => toRoundedState(gs.state))
-
-//    simulation.map(gs => toRoundedState(gs.state)).map { s =>
-//
     div(
       h1(s"Level ${level.name}"),
-      // landerSettings(landerState),
+      simulation.map { case (_, s, previous) =>
+        VModifier(
+          div(
+            display.flex,
+            flex                   := "row",
+            VModifier.style("gap") := "3rem",
+            div(
+              h2("Game Control"),
+              div(
+                gameState.map {
+                  case GameState.Paused          =>
+                    button(s"Start", onClick.as(GameState.Running) --> gameState)
+                  case GameState.Running         =>
+                    button(s"Pause", onClick.as(GameState.Paused) --> gameState)
+                  case GameState.Stopped(reason) =>
+                    reason match {
+                      case EvaluationResult.AllClear  => p("this shouldn't happen")
+                      case EvaluationResult.Crashed   => p("Houston, we had a problem...")
+                      case EvaluationResult.OffLimits => p("Off script is ok, but off screen...?")
+                      case EvaluationResult.Landed    => p("🎉")
+                    }
 
-      tick.map(ms => div(p(ms))),
-      div(
-        display.flex,
-        flex                   := "row",
-        VModifier.style("gap") := "3rem",
-        div(
-          h2("Game Control"),
-          div(
-            gameState.map {
-              case GameState.Paused  =>
-                button(s"Start", onClick.as(GameState.Running) --> gameState)
-              case GameState.Running =>
-                button(s"Pause", onClick.as(GameState.Paused) --> gameState)
-              case GameState.Crashed => VModifier.empty
-              case GameState.Initial =>
-                VModifier.empty
-                button(s"Start", onClick.as(GameState.Running) --> gameState)
-            },
+                },
+              ),
+            ),
+            div(
+              h2("Lander Control"),
+              landerControlSub.map { ctrl =>
+                table(
+                  thead(tr(th("angle"), th("thrust"))),
+                  tbody(tr(td(roundAt(2)(ctrl.angle)), td(roundAt(2)(ctrl.thrust)))),
+                )
+              },
+            ),
+            div(
+              h2("Lander State"),
+              div(
+                table(
+                  thead(tr(th("x"), th("y"), th("rotation"), th("hSpeed"), th("vSpeed"))),
+                  tbody(
+                    tr(
+                      td(roundAt(2)(s.x)),
+                      td(roundAt(2)(s.y)),
+                      td(roundAt(2)(s.rotate)),
+                      td(roundAt(2)(s.hSpeed)),
+                      td(roundAt(2)(s.vSpeed)),
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ),
-        ),
-        div(
-          h2("Lander Control"),
-          landerControlSub.map { ctrl =>
-            table(
-              thead(tr(th("angle"), th("thrust"))),
-              tbody(tr(td(roundAt(2)(ctrl.angle)), td(roundAt(2)(ctrl.thrust)))),
-            )
-          },
-        ),
-        div(
-          h2("Lander State"),
+          renderLevelGraphic(level, s, landerControlSub),
+          h2("Game Log"),
           div(
-            simulation.map(_._1).map { s =>
-              table(
-                thead(tr(th("x"), th("y"), th("rotation"), th("hSpeed"), th("vSpeed"))),
-                tbody(
+            table(
+              thead(
+                tr(
+                  th("tick"),
+                  th("x"),
+                  th("y"),
+                  th("rotation"),
+                  th("hSpeed"),
+                  th("vSpeed"),
+                  th("power cmd"),
+                  th("rotation cmd"),
+                ),
+              ),
+              tbody(
+                previous.zipWithIndex.map { case ((s, gc), tick) =>
                   tr(
+                    td(tick),
                     td(roundAt(2)(s.x)),
                     td(roundAt(2)(s.y)),
                     td(roundAt(2)(s.rotate)),
                     td(roundAt(2)(s.hSpeed)),
                     td(roundAt(2)(s.vSpeed)),
-                  ),
-                ),
-              )
-            },
+                    td(roundAt(2)(gc.power)),
+                    td(roundAt(2)(gc.rotation)),
+                  )
+
+                },
+              ),
+            ),
           ),
-        ),
-      ),
-      renderLevelGraphic(level, simulation.map(gs => toRoundedState(gs._1)), landerControlSub),
-      h2("Game Input"),
-      pre(level.toInputLines.mkString("\n")),
+          h2("Game Input"),
+          pre(level.toInputLines.mkString("\n")),
+        )
+      },
     )
   }
 
   case class ShipRay(surfacePoint: Vec2, ship: Vec2, ray: Line, intersections: List[Algorithms.LineIntersection])
   def calcShipRays(landerState: Simulator.State, level: Level): List[ShipRay] = {
-    val surfaceLines = level.initialState.surfaceCoords
-      .sliding(2, 1)
-      .toList
-      .map { case List(first, second) =>
-        Line(first.x, first.y, second.x, second.y)
-      }
 
     val ship = Vec2(landerState.x, landerState.y)
     val rays = level.initialState.surfaceCoords.map { c =>
       val surfacePoint      = Vec2(c.x, c.y)
       val ray               = Line(ship, surfacePoint)
       val otherSurfaceLines =
-        surfaceLines.filterNot(l => (l.start - surfacePoint).length < 0.01 || (l.end - surfacePoint).length < 0.01)
+        level.surfaceLines.filterNot(l =>
+          (l.start - surfacePoint).length < 0.01 || (l.end - surfacePoint).length < 0.01,
+        )
       val collisions        = otherSurfaceLines.flatMap { l =>
         l.intersect(ray) match {
           case Some(i) if i.onLine1 && i.onLine2 => List(i)
@@ -257,7 +270,7 @@ object Main {
 
   case class MouseControlState(angle: Int, thrust: Int)
 
-  def displaySpeedIndicator(landerSettings: Simulator.State) = {
+  def displaySpeedIndicator(landerSettings: PreciseState) = {
 
     val v               = Vec2(landerSettings.hSpeed, landerSettings.vSpeed)
     val l               = v.length
@@ -435,7 +448,7 @@ object Main {
 
   def renderLevelGraphic(
     level: Level,
-    lander: Observable[Simulator.State],
+    lander: PreciseState,
     landerControl: BehaviorSubject[MouseControlState],
   ) = {
     import svg._
@@ -445,7 +458,7 @@ object Main {
     val displayCoords = allCoords.map(toDisplayCoord)
     val pts           = displayCoords.map { case Coord(x, y) => s"$x, $y" }.mkString(" ")
 
-    def landerStuff(lander: Simulator.State) = {
+    def landerStuff(lander: PreciseState) = {
       val landerWidth  = 335.6
       val landerHeight = 308.7
 
@@ -453,7 +466,7 @@ object Main {
 
       val landerDisplayW      = landerWidth * landerScaleFactor
       val landerDisplayH      = landerHeight * landerScaleFactor
-      val landerCoords        = Coord(lander.x, lander.y)
+      val landerCoords        = Coord(PreciseState.myRound(lander.x), PreciseState.myRound(lander.y))
       val landerDisplayCoords = toDisplayCoord(landerCoords)
       val landerX: Int        = landerDisplayCoords.x - (landerDisplayW / 2).toInt
       val landerY: Int        = landerDisplayCoords.y - landerDisplayH.toInt
@@ -482,12 +495,11 @@ object Main {
     }
 
     val simulationSteps =
-      lander.map(s => fromRoundedState(s)).combineLatest(landerControl.map(s => GameCommand(s.angle, s.thrust))).map {
-        case (s, ctrl) =>
-          Simulator
-            .runUntilCrashed(SimulationStepInput(level, s, ctrl))
-            .map(toRoundedState)
-            .map(s => toDisplayCoord(Coord(s.x, s.y)))
+      landerControl.map(s => GameCommand(s.angle, s.thrust)).map { ctrl =>
+        Simulator
+          .runUntilCrashed(SimulationStepInput(level, lander, ctrl))
+          .map(toRoundedState)
+          .map(s => toDisplayCoord(Coord(s.x, s.y)))
       }
 
     val ctrlSub  = Subject.behavior(MouseDragThrustControl(None, None))
@@ -545,7 +557,7 @@ object Main {
         },
         onMouseUp.as(MouseDragThrustControl(None, None)) --> ctrlSub,
         thrustVectoringControl(ctrlSub, landerControl),
-        lander.map(landerStuff),
+        landerStuff(lander),
 
 //    line(
 //      stroke := "green",

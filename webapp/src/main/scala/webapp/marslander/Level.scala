@@ -1,6 +1,7 @@
 package webapp.marslander
 
 import io.circe.{Decoder, Encoder}
+import webapp.vectory.Line
 
 //"lander_initial_state": {
 //  "x": 2500,
@@ -15,6 +16,14 @@ import io.circe.{Decoder, Encoder}
 case class Level(name: String, initialState: Surface, landerInitialState: LanderInitialState) {
   def toInputLines: List[String] =
     initialState.surfaceN.toString :: initialState.surfaceCoords.map { case Coord(x, y) => s"$x $y" }
+
+  val surfaceLines: List[Line] = initialState.surfaceCoords
+    .sliding(2, 1)
+    .toList
+    .map { case List(first, second) =>
+      Line(first.x, first.y, second.x, second.y)
+    }
+
 }
 case class LanderInitialState(x: Int, y: Int, hSpeed: Int, vSpeed: Int, fuel: Int, rotate: Int, power: Int)
 case class Surface(surfaceN: Int, surfaceCoords: List[Coord])

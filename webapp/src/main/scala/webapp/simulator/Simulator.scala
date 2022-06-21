@@ -1,7 +1,8 @@
 package webapp.simulator
 
 import webapp.marslander.Level
-import webapp.vectory.Vec2
+import webapp.simulator.Simulator.EvaluationResult.{AllClear, Crashed, Landed, OffLimits}
+import webapp.vectory.{Line, Vec2}
 
 object Simulator {
 
@@ -10,14 +11,45 @@ object Simulator {
       s"(x:$x, y:$y, hSpeed:$hSpeed, vSpeed:$vSpeed, fuel:$fuel, rotate:$rotate, power:$power)"
   }
   case class PreciseState(x: Double, y: Double, hSpeed: Double, vSpeed: Double, fuel: Int, rotate: Int, power: Int) {
-    override def toString: String =
-      s"""     x:$x
-         |     y:$y
-         |hSpeed:$hSpeed
-         |vSpeed:$vSpeed
-         |  fuel:$fuel
-         |rotate:$rotate
-         | power:$power""".stripMargin
+    def evaluate(level: Level, lastOption: Option[PreciseState]): EvaluationResult = {
+
+      def intersectsWithSurface(previous: PreciseState): Boolean = {
+        val now              = Vec2(x, y)
+        val prev             = Vec2(previous.x, previous.y)
+        val connectingVector = Line(prev, now)
+        level.surfaceLines.exists { surfaceLine =>
+          surfaceLine.intersect(connectingVector).exists(intersection => intersection.onLine1 && intersection.onLine2)
+        }
+      }
+
+      def hasLanded: Boolean = false
+
+      if (y < 0 || y > Constants.gameHeight || x < 0 || x > Constants.gameWidth)
+        OffLimits
+      else if (lastOption.exists(intersectsWithSurface)) {
+        Crashed
+      }
+      else if (hasLanded) {
+        Landed
+      }
+      else AllClear
+    }
+    //    override def toString: String =
+//      s"""     x:$x
+//         |     y:$y
+//         |hSpeed:$hSpeed
+//         |vSpeed:$vSpeed
+//         |  fuel:$fuel
+//         |rotate:$rotate
+//         | power:$power""".stripMargin
+  }
+
+  sealed trait EvaluationResult
+  object EvaluationResult {
+    case object AllClear  extends EvaluationResult
+    case object Crashed   extends EvaluationResult
+    case object OffLimits extends EvaluationResult
+    case object Landed    extends EvaluationResult
   }
 
   object PreciseState {
