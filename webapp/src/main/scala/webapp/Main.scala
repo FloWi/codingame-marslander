@@ -270,14 +270,17 @@ object Main {
 
   case class MouseControlState(angle: Int, thrust: Int)
 
-  def displaySpeedIndicator(landerSettings: PreciseState) = {
+  def toCoord(v: Vec2): Coord =
+    Coord(PreciseState.myRound(v.x), PreciseState.myRound(v.y))
 
-    val v               = Vec2(landerSettings.hSpeed, landerSettings.vSpeed)
+  def renderVelocityIndicator(landerSettings: PreciseState) = {
+
+    val v               = Vec2(landerSettings.hSpeed, -landerSettings.vSpeed)
     val l               = v.length
     val max             = 400
     val maxLength       = max.toString
     val centerIndicator = Vec2(max, max)
-    val end             = centerIndicator + v
+    val end             = toCoord(centerIndicator + v)
 
     import svg._
     svg(
@@ -473,8 +476,8 @@ object Main {
 
       List(
         g(
-          pointerEvents                             := "none",
-          transform                                 := s"translate($landerX, $landerY)",
+          pointerEvents                               := "none",
+          transform                                   := s"translate($landerX, $landerY)",
           g(
             pointerEvents := "none",
             image(
@@ -490,7 +493,7 @@ object Main {
             ),
           ),
         ),
-        displaySpeedIndicator(lander)(pointerEvents := "none"),
+        renderVelocityIndicator(lander)(pointerEvents := "none"),
       )
     }
 
