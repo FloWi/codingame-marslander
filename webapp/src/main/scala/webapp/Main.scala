@@ -7,6 +7,7 @@ import io.circe.{Decoder, Encoder}
 import org.scalajs.dom.Element
 import outwatch._
 import outwatch.dsl._
+import webapp.graphics.Rocket
 import webapp.marslander.Game.{GameSettings, GameState}
 import webapp.marslander.{Coord, Level}
 import webapp.simulator.Simulator
@@ -22,12 +23,42 @@ import scala.collection.immutable.Queue
 object Main {
 
   def main(args: Array[String]): Unit =
-    Outwatch.renderInto[SyncIO]("#app", app).unsafeRunSync()
+    Outwatch.renderInto[SyncIO]("#app", svgPlayground).unsafeRunSync()
+//    Outwatch.renderInto[SyncIO]("#app", app).unsafeRunSync()
 
   def app =
     div(
       Communication.getLevels.map(renderUi),
     )
+
+  def svgPlayground = {
+    import svg._
+    val activeRocket = Subject.behavior(0)
+
+    div(
+      button("+", onClick(activeRocket.map(_ + 1)) --> activeRocket),
+      button("-", onClick(activeRocket.map(_ - 1)) --> activeRocket),
+      activeRocket.map { value =>
+        val idx    = value % Rocket.rockets.size
+        val rocket = Rocket.rockets(idx)
+        svg(
+          viewBox := "0 0 1400 700",
+          width   := "1400",
+          height  := "700",
+          g(
+            transform := "scale(0.1)",
+            rocket.svg(
+              x      := "0",
+              y      := "0",
+              width  := rocket.adjustedWidth.toString,
+              height := rocket.adjustedHeight.toString,
+            ),
+          ),
+        )
+
+      },
+    )
+  }
 
   case class FlightRecoder(score: Int, commands: List[GameCommand])
 
