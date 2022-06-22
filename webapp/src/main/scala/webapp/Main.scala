@@ -39,20 +39,13 @@ object Main {
       button("+", onClick(activeRocket.map(_ + 1)) --> activeRocket),
       button("-", onClick(activeRocket.map(_ - 1)) --> activeRocket),
       activeRocket.map { value =>
-        val idx    = value % Rocket.rockets.size
-        val rocket = Rocket.rockets(idx)
+        val thrust = value % 4
         svg(
           viewBox := "0 0 1400 700",
           width   := "1400",
           height  := "700",
           g(
-            transform := "scale(0.1)",
-            rocket.svg(
-              x      := "0",
-              y      := "0",
-              width  := rocket.adjustedWidth.toString,
-              height := rocket.adjustedHeight.toString,
-            ),
+            Rocket.rocketWithFlame(thrust),
           ),
         )
 
