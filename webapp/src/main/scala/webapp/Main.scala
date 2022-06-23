@@ -23,8 +23,8 @@ import scala.collection.immutable.Queue
 object Main {
 
   def main(args: Array[String]): Unit =
-    Outwatch.renderInto[SyncIO]("#app", svgPlayground).unsafeRunSync()
-//    Outwatch.renderInto[SyncIO]("#app", app).unsafeRunSync()
+    Outwatch.renderInto[SyncIO]("#app", app).unsafeRunSync()
+//    Outwatch.renderInto[SyncIO]("#app", svgPlayground).unsafeRunSync()
 
   def app =
     div(
@@ -613,36 +613,13 @@ object Main {
     val pts           = displayCoords.map { case Coord(x, y) => s"$x, $y" }.mkString(" ")
 
     def landerStuff(lander: PreciseState) = {
-      val landerWidth  = 335.6
-      val landerHeight = 308.7
 
-      val landerScaleFactor = 0.55
-
-      val landerDisplayW      = landerWidth * landerScaleFactor
-      val landerDisplayH      = landerHeight * landerScaleFactor
       val landerCoords        = Coord(PreciseState.myRound(lander.x), PreciseState.myRound(lander.y))
       val landerDisplayCoords = toDisplayCoord(landerCoords)
-      val landerX: Int        = landerDisplayCoords.x - (landerDisplayW / 2).toInt
-      val landerY: Int        = landerDisplayCoords.y - landerDisplayH.toInt
 
       List(
         g(
-          pointerEvents                               := "none",
-          transform                                   := s"translate($landerX, $landerY)",
-          g(
-            pointerEvents := "none",
-            image(
-              //          <image x="10" y="20" width="80" height="80" href="recursion.svg" />
-              // w: 335,6
-              // h: 308,7
-              href      := s"${Communication.assetLocation}/Lander.svg",
-              width     := landerDisplayW.toString,
-              height    := landerDisplayH.toString,
-              //            VModifier.attr("transform-box")    := s"fill-box",
-              //            VModifier.attr("transform-origin") := s"center",
-              transform := s"rotate(${-lander.rotate}, ${landerDisplayW / 2}, ${landerDisplayH / 2})",
-            ),
-          ),
+          Rocket.rocketWithFlame(lander.power, Vec2(landerDisplayCoords.x, landerDisplayCoords.y), lander.rotate, 200),
         ),
         renderVelocityIndicator(lander)(pointerEvents := "none"),
       )
