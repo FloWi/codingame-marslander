@@ -35,20 +35,20 @@ object Main {
     import svg._
     val activeRocket = Subject.behavior(0)
 
+    val location = Vec2(500, 500)
+
     div(
       button("+", onClick(activeRocket.map(_ + 1)) --> activeRocket),
       button("-", onClick(activeRocket.map(_ - 1)) --> activeRocket),
       activeRocket.map { value =>
-        val thrust = value % 4
+        val thrust = value % 5
         svg(
           viewBox := "0 0 1400 700",
           width   := "1400",
           height  := "700",
-          g(
-            Rocket.rocketWithFlame(thrust),
-          ),
+          circle(cx := location.x.toString, cy := location.y.toString, r := "10", fill := "black"),
+          Rocket.rocketWithFlame(thrust, location, -45, 75),
         )
-
       },
     )
   }
