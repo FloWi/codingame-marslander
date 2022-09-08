@@ -10,7 +10,7 @@ val versions = new {
   val scalaTest          = "3.2.12"
   val circeVersion       = "0.14.1"
   val sttpClient3Version = "3.6.2"
-
+  val catsEffectVersion  = "3.3.12"
 }
 
 lazy val scalaJsMacrotaskExecutor = Seq(
@@ -19,11 +19,63 @@ lazy val scalaJsMacrotaskExecutor = Seq(
   Compile / npmDependencies += "setimmediate"  -> "1.0.5", // polyfill
 )
 
-lazy val webapp = project
+lazy val simulator = project
+  .in(file("simulator"))
   .enablePlugins(
     ScalaJSPlugin,
     ScalaJSBundlerPlugin,
   )
+  //  .settings(scalaJsMacrotaskExecutor)
+  .settings(
+    libraryDependencies ++= Seq(
+      "org.scalatest" %%% "scalatest"     % versions.scalaTest % Test,
+      "io.circe"      %%% "circe-generic" % versions.circeVersion,
+      "io.circe"      %%% "circe-parser"  % versions.circeVersion,
+      "org.typelevel" %%% "cats-effect"   % versions.catsEffectVersion,
+    ),
+    scalacOptions --= Seq(
+      "-Xfatal-warnings",
+    ), // overwrite option from https://github.com/DavidGregory084/sbt-tpolecat
+  )
+
+lazy val bot = project
+  .in(file("bot"))
+  .settings(
+    libraryDependencies ++= Seq(
+      "com.lihaoyi" %% "os-lib" % "0.8.1",
+    ),
+  )
+
+lazy val cli = project
+  .in(file("cli"))
+  .enablePlugins(
+    ScalaJSPlugin,
+    ScalaJSBundlerPlugin,
+    ScalablyTypedConverterPlugin,
+  )
+  .dependsOn(simulator)
+  .settings(
+//    Compile / npmDevDependencies   ++= Seq(
+//      "@fun-stack/fun-pack" -> versions.funPack, // sane defaults for webpack development and production, see webpack.config.*.js
+//    ),
+    scalacOptions --= Seq(
+      "-Xfatal-warnings",
+    ), // overwrite option from https://github.com/DavidGregory084/sbt-tpolecat
+    useYarn                         := true, // Makes scalajs-bundler use yarn instead of npm
+    scalaJSUseMainModuleInitializer := true,
+    webpackConfigFile               := Some(baseDirectory.value / "webpack.config.js"),
+    Compile / npmDependencies      ++= Seq(
+      "@types/node" -> "16.11.7",
+    ),
+  )
+
+lazy val webapp = project
+  .in(file("webapp"))
+  .enablePlugins(
+    ScalaJSPlugin,
+    ScalaJSBundlerPlugin,
+  )
+  .dependsOn(simulator)
   .settings(scalaJsMacrotaskExecutor)
   .settings(
     libraryDependencies          ++= Seq(

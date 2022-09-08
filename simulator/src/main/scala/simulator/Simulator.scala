@@ -1,9 +1,8 @@
-package webapp.simulator
+package simulator
 
 import io.circe.{Decoder, Encoder}
-import webapp.Main.FlightRecoder
+import simulator.Simulator.EvaluationResult.{AllClear, Crashed, Landed, OffLimits}
 import webapp.marslander.Level
-import webapp.simulator.Simulator.EvaluationResult.{AllClear, Crashed, Landed, OffLimits}
 import webapp.vectory.{Line, Vec2}
 
 object Simulator {
@@ -210,5 +209,12 @@ object Simulator {
 
   def score(level: Level, state: PreciseState): Int =
     state.fuel
+
+  case class FlightRecoder(score: Int, commands: List[GameCommand])
+
+  object FlightRecoder {
+    implicit val landerInitialStateDecoder: Decoder[FlightRecoder] = io.circe.generic.semiauto.deriveDecoder
+    implicit val landerInitialStateEncoder: Encoder[FlightRecoder] = io.circe.generic.semiauto.deriveEncoder
+  }
 
 }

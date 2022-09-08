@@ -1,6 +1,6 @@
 package webapp.marslander
 
-import webapp.simulator.Simulator.EvaluationResult
+import simulator.Simulator.EvaluationResult
 
 object Game {
 

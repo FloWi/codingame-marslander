@@ -3,16 +3,15 @@ package webapp
 import cats.effect.{IO, SyncIO}
 import colibri.{BehaviorSubject, Observable, Subject}
 import com.raquo.domtypes.jsdom.defs.events.TypedTargetMouseEvent
-import io.circe.{Decoder, Encoder}
 import org.scalajs.dom.Element
 import outwatch._
 import outwatch.dsl._
 import webapp.graphics.Rocket
 import webapp.marslander.Game.{GameSettings, GameState}
 import webapp.marslander.{Coord, Level}
-import webapp.simulator.Simulator
-import webapp.simulator.Simulator.PreciseState.toRoundedState
-import webapp.simulator.Simulator._
+import simulator.Simulator
+import simulator.Simulator.PreciseState.toRoundedState
+import simulator.Simulator._
 import webapp.vectory.{Algorithms, Line, Vec2}
 
 import scala.collection.immutable.Queue
@@ -51,13 +50,6 @@ object Main {
         )
       },
     )
-  }
-
-  case class FlightRecoder(score: Int, commands: List[GameCommand])
-
-  object FlightRecoder {
-    implicit val landerInitialStateDecoder: Decoder[FlightRecoder] = io.circe.generic.semiauto.deriveDecoder
-    implicit val landerInitialStateEncoder: Encoder[FlightRecoder] = io.circe.generic.semiauto.deriveEncoder
   }
 
   case class HighScore(level: Level, score: Option[Int])
@@ -264,6 +256,8 @@ object Main {
     div(
       h1(s"Level ${level.name}"),
       simulation.map { case ((_, s, previous), result) =>
+        val radar = calcShipRadar(s, level)
+
         VModifier(
           h2("Score"),
           table(
@@ -325,24 +319,45 @@ object Main {
                       th(textAlign.right, "fuel"),
                       th(textAlign.right, "hSpeed"),
                       th(textAlign.right, "vSpeed"),
+                      th(textAlign.right, "closest distance"),
+                      th(textAlign.right, "radars"),
                     ),
                   ),
                   tbody(
                     tr(
-                      td(textAlign.right, width := "12.5%", fontFamily := "monospace", formatNum(roundAt(2)(s.x))),
-                      td(textAlign.right, width := "12.5%", fontFamily := "monospace", formatNum(roundAt(2)(s.y))),
-                      td(textAlign.right, width := "12.5%", fontFamily := "monospace", s.rotate),
-                      td(textAlign.right, width := "12.5%", fontFamily := "monospace", s.power),
-                      td(textAlign.right, width := "12.5%", fontFamily := "monospace", s.fuel),
-                      td(textAlign.right, width := "12.5%", fontFamily := "monospace", formatNum(roundAt(2)(s.hSpeed))),
-                      td(textAlign.right, width := "12.5%", fontFamily := "monospace", formatNum(roundAt(2)(s.vSpeed))),
+                      td(textAlign.right, width := "10.0%", fontFamily := "monospace", formatNum(roundAt(2)(s.x))),
+                      td(textAlign.right, width := "10.0%", fontFamily := "monospace", formatNum(roundAt(2)(s.y))),
+                      td(textAlign.right, width := "10.0%", fontFamily := "monospace", s.rotate),
+                      td(textAlign.right, width := "10.0%", fontFamily := "monospace", s.power),
+                      td(textAlign.right, width := "10.0%", fontFamily := "monospace", s.fuel),
+                      td(textAlign.right, width := "10.0%", fontFamily := "monospace", formatNum(roundAt(2)(s.hSpeed))),
+                      td(textAlign.right, width := "10.0%", fontFamily := "monospace", formatNum(roundAt(2)(s.vSpeed))),
+                      td(
+                        textAlign.right,
+                        width                   := "10.0%",
+                        fontFamily              := "monospace", {
+                          val collidingRays: List[(Algorithms.LineIntersection, Double)] =
+                            radar.flatMap(_.maybeClosestCollisionPointAndDistance)
+                          val closestDistance                                            = collidingRays.map(_._2).minOption
+                          val foo: String                                                = closestDistance.map(d => formatNum(roundAt(2)(d))).getOrElse("---")
+                          foo
+                        },
+                      ),
+                      td(textAlign.right, width := "10.0%", fontFamily := "monospace", "???"),
                     ),
                   ),
                 ),
               ),
             ),
           ),
-          renderLevelGraphic(level, s, previous.map(_._1), landerControlSub, best.map(_._2).getOrElse(List.empty)),
+          renderLevelGraphic(
+            level,
+            s,
+            previous.map(_._1),
+            landerControlSub,
+            best.map(_._2).getOrElse(List.empty),
+            radar,
+          ),
           h2("Game Log"),
           div(
             table(
@@ -390,28 +405,36 @@ object Main {
     )
   }
 
-  case class ShipRay(surfacePoint: Vec2, ship: Vec2, ray: Line, intersections: List[Algorithms.LineIntersection])
-  def calcShipRays(landerState: Simulator.State, level: Level): List[ShipRay] = {
+  case class ShipRay(ship: Vec2, ray: Line, angleDeg: Int, intersections: List[Algorithms.LineIntersection]) {
+    def maybeClosestCollisionPointAndDistance: Option[(Algorithms.LineIntersection, Double)] = intersections.map {
+      intersection =>
+        val distance = ship.-(intersection.pos).abs.length
+        intersection -> distance
+    }.minByOption(_._2)
 
-    val ship = Vec2(landerState.x, landerState.y)
-    val rays = level.initialState.surfaceCoords.map { c =>
-      val surfacePoint      = Vec2(c.x, c.y)
-      val ray               = Line(ship, surfacePoint)
-      val otherSurfaceLines =
-        level.surfaceLines.filterNot(l =>
-          (l.start - surfacePoint).length < 0.01 || (l.end - surfacePoint).length < 0.01,
-        )
-      val collisions        = otherSurfaceLines.flatMap { l =>
-        l.intersect(ray) match {
+  }
+
+  def calcShipRadar(landerState: PreciseState, level: Level): List[ShipRay] = {
+
+    val ship            = Vec2(landerState.x, landerState.y)
+    val gameMapDiagonal =
+      math.sqrt(Constants.gameHeight * Constants.gameHeight + Constants.gameWidth * Constants.gameWidth)
+
+    // create rays in 5° distance
+    val rays = 0.until(end = 360, step = 5).map { angleDeg =>
+      val radarRay = Line.apply(ship, ship + Vec2.unit(angleDeg) * gameMapDiagonal)
+
+      val collisions = level.surfaceLines.flatMap { l =>
+        l.intersect(radarRay) match {
           case Some(i) if i.onLine1 && i.onLine2 => List(i)
           case _                                 => List.empty
         }
       }
 
-      ShipRay(surfacePoint, ship, ray, collisions)
-    }
+      ShipRay(ship, radarRay, angleDeg, collisions)
 
-    rays
+    }
+    rays.toList
   }
 
   def toDisplayCoord(coord: Coord): Coord =
@@ -604,6 +627,7 @@ object Main {
     previous: Queue[PreciseState],
     landerControl: BehaviorSubject[MouseControlState],
     highScorePath: List[PreciseState],
+    radar: List[ShipRay],
   ) = {
     import svg._
     val allCoords =
@@ -620,6 +644,24 @@ object Main {
       List(
         g(
           Rocket.rocketWithFlame(lander.power, Vec2(landerDisplayCoords.x, landerDisplayCoords.y), lander.rotate, 200),
+        ),
+        g(
+          radar.map { ray =>
+            val isColliding = ray.maybeClosestCollisionPointAndDistance.isDefined
+            val end         = ray.maybeClosestCollisionPointAndDistance.map(_._1.pos).getOrElse(ray.ray.end)
+
+            val endCoord =
+              toDisplayCoord(Coord(PreciseState.myRound(end.x), PreciseState.myRound(end.y)))
+            line(
+              stroke        := (if (isColliding) "red" else "green"),
+              strokeWidth   := "2",
+              x1            := landerDisplayCoords.x.toString,
+              y1            := landerDisplayCoords.y.toString,
+              x2            := endCoord.x.toString,
+              y2            := endCoord.y.toString,
+              pointerEvents := "none",
+            )
+          },
         ),
         renderVelocityIndicator(lander)(pointerEvents := "none"),
       )
