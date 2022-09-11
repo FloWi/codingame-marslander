@@ -284,139 +284,181 @@ object Main {
         val landingRadar = calcLandingAreaAccess(s, level)
 
         uiSettingsSub.map { uiSettings =>
-          VModifier(
+          val divScore                = div(
+            idAttr := "score",
             h2("Score"),
             table(
               thead(tr(th(textAlign.right, "Score"), th(textAlign.right, "Highscore"))),
               tbody(tr(td(textAlign.right, score(level, s)), td(textAlign.right, best.map(_._1.score)))),
             ),
+          )
+          val divGameControl          = div(
+            idAttr := "gameControl",
+            h2("Game Control"),
             div(
-              display.flex,
-              flex                   := "row",
-              VModifier.style("gap") := "3rem",
-              div(
-                h2("Game Control"),
-                div(
-                  div(gameState.map { gs =>
-                    val gsSpecific = gs match {
-                      case GameState.Paused          =>
-                        button(s"Start", onClick.as(GameState.Running) --> gameState)
-                      case GameState.Running         =>
-                        button(s"Pause", onClick.as(GameState.Paused) --> gameState)
-                      case GameState.Stopped(reason) =>
-                        reason match {
-                          case EvaluationResult.AllClear  => p("this shouldn't happen")
-                          case EvaluationResult.Crashed   => p("Houston, we had a problem...")
-                          case EvaluationResult.OffLimits => p("Off script is ok, but off screen...?")
-                          case EvaluationResult.Landed    => p(fontSize := "2.5rem", "🎉")
-                        }
+              div(gameState.map { gs =>
+                val gsSpecific = gs match {
+                  case GameState.Paused          =>
+                    button(s"Start", onClick.as(GameState.Running) --> gameState)
+                  case GameState.Running         =>
+                    button(s"Pause", onClick.as(GameState.Paused) --> gameState)
+                  case GameState.Stopped(reason) =>
+                    reason match {
+                      case EvaluationResult.AllClear  => p("this shouldn't happen")
+                      case EvaluationResult.Crashed   => p("Houston, we had a problem...")
+                      case EvaluationResult.OffLimits => p("Off script is ok, but off screen...?")
+                      case EvaluationResult.Landed    => p(fontSize := "2.5rem", "🎉")
                     }
-                    VModifier(
-                      gsSpecific,
-                      button(s"Restart", onClick.as(Some(level)) --> selectedLevelSub),
-                    )
-                  }),
-                  div(
-                    VModifier(
-                      label(
-                        "radar",
-                        input(
-                          typ     := "checkbox",
-                          checked := uiSettings.showRadar,
-                          onChange.checked.map(checked => uiSettings.copy(showRadar = checked)) --> uiSettingsSub,
-                        ),
-                      ),
-                      label(
-                        "high score path",
-                        input(
-                          typ     := "checkbox",
-                          checked := uiSettings.showHighScorePath,
-                          onChange.checked.map { checked =>
-                            uiSettings.copy(showHighScorePath = checked)
-                          } --> uiSettingsSub,
-                        ),
-                      ),
+                }
+                VModifier(
+                  gsSpecific,
+                  button(s"Restart", onClick.as(Some(level)) --> selectedLevelSub),
+                )
+              }),
+              div(
+                VModifier(
+                  label(
+                    "radar",
+                    input(
+                      typ     := "checkbox",
+                      checked := uiSettings.showRadar,
+                      onChange.checked.map(checked => uiSettings.copy(showRadar = checked)) --> uiSettingsSub,
+                    ),
+                  ),
+                  label(
+                    "high score path",
+                    input(
+                      typ     := "checkbox",
+                      checked := uiSettings.showHighScorePath,
+                      onChange.checked.map { checked =>
+                        uiSettings.copy(showHighScorePath = checked)
+                      } --> uiSettingsSub,
                     ),
                   ),
                 ),
               ),
+            ),
+          )
+          val divLanderControlDisplay = div(
+            idAttr := "landerControl",
+            h2("Lander Control"),
+            landerControlSub.map { ctrl =>
+              table(
+                thead(tr(th(textAlign.right, "angle"), th(textAlign.right, "thrust"))),
+                tbody(
+                  tr(
+                    td(textAlign.right, width := "50%", fontFamily := "monospace", roundAt(2)(ctrl.angle)),
+                    td(textAlign.right, width := "50%", fontFamily := "monospace", roundAt(2)(ctrl.thrust)),
+                  ),
+                ),
+              )
+            },
+          )
+
+          VModifier(
+            div(
+              display.flex,
+              flex                   := "row",
+              VModifier.style("gap") := "3rem",
+              divGameControl,
+              divLanderControlDisplay,
+              divScore,
+            ),
+            div(
+              idAttr                 := "landerState",
+              h2("Lander State"),
               div(
-                h2("Lander Control"),
-                landerControlSub.map { ctrl =>
-                  table(
-                    thead(tr(th(textAlign.right, "angle"), th(textAlign.right, "thrust"))),
-                    tbody(
-                      tr(
-                        td(textAlign.right, width := "50%", fontFamily := "monospace", roundAt(2)(ctrl.angle)),
-                        td(textAlign.right, width := "50%", fontFamily := "monospace", roundAt(2)(ctrl.thrust)),
-                      ),
+                table(
+                  thead(
+                    tr(
+                      th(textAlign.right, "x"),
+                      th(textAlign.right, "y"),
+                      th(textAlign.right, "rotation"),
+                      th(textAlign.right, "power"),
+                      th(textAlign.right, "fuel"),
+                      th(textAlign.right, "hSpeed"),
+                      th(textAlign.right, "vSpeed"),
+                      th(textAlign.right, "suicide burn height at curr vV"),
+                      th(textAlign.right, "closest radar distance"),
+                      th(textAlign.right, "landing radar GO?"),
+                      th(textAlign.right, "horizontal distance to landing area"),
+                      th(textAlign.right, "vertical distance to landing area"),
                     ),
-                  )
-                },
-              ),
-              div(
-                h2("Lander State"),
-                div(
-                  table(
-                    thead(
-                      tr(
-                        th(textAlign.right, "x"),
-                        th(textAlign.right, "y"),
-                        th(textAlign.right, "rotation"),
-                        th(textAlign.right, "power"),
-                        th(textAlign.right, "fuel"),
-                        th(textAlign.right, "hSpeed"),
-                        th(textAlign.right, "vSpeed"),
-                        th(textAlign.right, "suicide burn height at curr vV"),
-                        th(textAlign.right, "closest radar distance"),
-                        th(textAlign.right, "radars"),
+                  ),
+                  tbody(
+                    tr(
+                      td(textAlign.right, width := "10.0%", fontFamily := "monospace", formatNum(roundAt(2)(s.x))),
+                      td(textAlign.right, width := "10.0%", fontFamily := "monospace", formatNum(roundAt(2)(s.y))),
+                      td(
+                        textAlign.right,
+                        width                   := "10%",
+                        fontFamily              := "monospace",
+                        redIfOutOfLimits(s.rotate == 0),
+                        formatNum(roundAt(2)(s.rotate)),
                       ),
-                    ),
-                    tbody(
-                      tr(
-                        td(textAlign.right, width := "10.0%", fontFamily := "monospace", formatNum(roundAt(2)(s.x))),
-                        td(textAlign.right, width := "10.0%", fontFamily := "monospace", formatNum(roundAt(2)(s.y))),
-                        td(
-                          textAlign.right,
-                          width                   := "10%",
-                          fontFamily              := "monospace",
-                          redIfOutOfLimits(s.rotate == 0),
-                          formatNum(roundAt(2)(s.rotate)),
-                        ),
-                        td(textAlign.right, width := "10.0%", fontFamily := "monospace", s.power),
-                        td(textAlign.right, width := "10.0%", fontFamily := "monospace", s.fuel),
-                        td(
-                          textAlign.right,
-                          width                   := "10%",
-                          fontFamily              := "monospace",
-                          redIfOutOfLimits(math.abs(s.hSpeed) < Constants.maxLandingHorizontalSpeed),
-                          formatNum(roundAt(2)(s.hSpeed)),
-                        ),
-                        td(
-                          textAlign.right,
-                          width                   := "10%",
-                          fontFamily              := "monospace",
-                          redIfOutOfLimits(math.abs(s.vSpeed) < Constants.maxLandingVerticalSpeed),
-                          formatNum(roundAt(2)(s.vSpeed)),
-                        ),
-                        td(
-                          textAlign.right,
-                          width                   := "10.0%",
-                          fontFamily              := "monospace",
-                          formatNum(roundAt(2)(calcSuicideBurnHeight(s, level))),
-                        ),
-                        td(
-                          textAlign.right,
-                          width                   := "10.0%",
-                          fontFamily              := "monospace", {
-                            val collidingRays: List[(Algorithms.LineIntersection, Double)] =
-                              radar.flatMap(_.maybeClosestCollisionPointAndDistance)
-                            val closestDistance                                            = collidingRays.map(_._2).minOption
-                            val foo: String                                                = closestDistance.map(d => formatNum(roundAt(2)(d))).getOrElse("---")
-                            foo
-                          },
-                        ),
-                        td(textAlign.right, width := "10.0%", fontFamily := "monospace", "???"),
+                      td(textAlign.right, width := "10.0%", fontFamily := "monospace", s.power),
+                      td(textAlign.right, width := "10.0%", fontFamily := "monospace", s.fuel),
+                      td(
+                        textAlign.right,
+                        width                   := "10%",
+                        fontFamily              := "monospace",
+                        redIfOutOfLimits(math.abs(s.hSpeed) < Constants.maxLandingHorizontalSpeed),
+                        formatNum(roundAt(2)(s.hSpeed)),
+                      ),
+                      td(
+                        textAlign.right,
+                        width                   := "10%",
+                        fontFamily              := "monospace",
+                        redIfOutOfLimits(math.abs(s.vSpeed) < Constants.maxLandingVerticalSpeed),
+                        formatNum(roundAt(2)(s.vSpeed)),
+                      ),
+                      td(
+                        textAlign.right,
+                        width                   := "10.0%",
+                        fontFamily              := "monospace",
+                        formatNum(roundAt(2)(calcSuicideBurnHeight(s, level))),
+                      ),
+                      td(
+                        textAlign.right,
+                        width                   := "10.0%",
+                        fontFamily              := "monospace", {
+                          val collidingRays: List[(Algorithms.LineIntersection, Double)] =
+                            radar.flatMap(_.maybeClosestCollisionPointAndDistance)
+                          val closestDistance                                            = collidingRays.map(_._2).minOption
+                          val foo: String                                                = closestDistance.map(d => formatNum(roundAt(2)(d))).getOrElse("---")
+                          foo
+                        },
+                      ),
+                      td(
+                        textAlign.right,
+                        width                   := "10.0%",
+                        fontFamily              := "monospace",
+                        landingRadar.map(_.maybeClosestCollisionPointAndDistance.isEmpty.toString).mkString("|"),
+                      ),
+                      td(
+                        textAlign.right,
+                        width                   := "10.0%",
+                        fontFamily              := "monospace", {
+                          val isAboveLandingArea = s.x >= level.landingArea.start.x && s.x <= level.landingArea.end.x
+                          val distance           =
+                            if (isAboveLandingArea) 0.0
+                            else {
+                              val distanceToStart = math.abs(level.landingArea.start.x - s.x)
+                              val distanceToEnd   = math.abs(level.landingArea.end.x - s.x)
+                              math.min(distanceToStart, distanceToEnd)
+                            }
+                          formatNum(roundAt(2)(distance))
+                        },
+                      ),
+                      td(
+                        textAlign.right,
+                        width                   := "10.0%",
+                        fontFamily              := "monospace", {
+
+                          val distance = s.y - level.landingArea.start.y
+
+                          formatNum(roundAt(2)(distance))
+                        },
                       ),
                     ),
                   ),
