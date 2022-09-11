@@ -280,7 +280,8 @@ object Main {
     div(
       h1(s"Level ${level.name}"),
       simulation.map { case ((_, s, previous), result) =>
-        val radar = calcShipRadar(s, level)
+        val radar        = calcShipRadar(s, level)
+        val landingRadar = calcLandingAreaAccess(s, level)
 
         uiSettingsSub.map { uiSettings =>
           VModifier(
@@ -402,7 +403,7 @@ object Main {
                           textAlign.right,
                           width                   := "10.0%",
                           fontFamily              := "monospace",
-                          calcSuicideBurnHeight(s, level),
+                          formatNum(roundAt(2)(calcSuicideBurnHeight(s, level))),
                         ),
                         td(
                           textAlign.right,
@@ -429,6 +430,7 @@ object Main {
               landerControlSub,
               best.map(_._2).getOrElse(List.empty),
               radar,
+              landingRadar,
               uiSettings,
             ),
             h2("Game Log"),
@@ -510,7 +512,37 @@ object Main {
         val distance = ship.-(intersection.pos).abs.length
         intersection -> distance
     }.minByOption(_._2)
+  }
 
+  def calcLandingAreaAccess(landerState: PreciseState, level: Level): List[ShipRay] = {
+
+    val start  = level.landingArea.start
+    val end    = level.landingArea.end
+    val middle = level.landingArea.center
+
+//    val landingSpots = List(level.landingArea.start, level.landingArea.center, level.landingArea.end)
+    val landingSpots = 0
+      .to(end = 100, step = 25)
+      .map(_ / 100.0)
+      .map { relativeAmount =>
+        start + ((end - start) * relativeAmount)
+      }
+      .toList
+
+    val ship = Vec2(landerState.x, landerState.y)
+
+    val rays = landingSpots.map { landingLocation =>
+      val radarRay   = Line(ship, landingLocation)
+      val collisions = level.surfaceLines.diff(List(level.landingArea)).flatMap { l =>
+        l.intersect(radarRay) match {
+          case Some(i) if i.onLine1 && i.onLine2 => List(i)
+          case _                                 => List.empty
+        }
+      }
+      ShipRay(ship, radarRay, 0, collisions)
+    }
+
+    rays
   }
 
   def calcShipRadar(landerState: PreciseState, level: Level): List[ShipRay] = {
@@ -735,6 +767,7 @@ object Main {
     landerControl: BehaviorSubject[MouseControlState],
     highScorePath: List[PreciseState],
     radar: List[ShipRay],
+    landingRadar: List[ShipRay],
     uiSettings: UISettings,
   ) = {
     import svg._
@@ -774,6 +807,26 @@ object Main {
               )
             },
           ),
+        ),
+        g(
+          idAttr                                      := "landingRadarRays",
+          landingRadar.map { ray =>
+            val isColliding = ray.maybeClosestCollisionPointAndDistance.isDefined
+            val end         = ray.ray.end
+
+            val endCoord =
+              toDisplayCoord(Coord(PreciseState.myRound(end.x), PreciseState.myRound(end.y)))
+            line(
+              stroke        := (if (isColliding) "orangered" else "blueviolet"),
+              strokeWidth   := "8",
+              x1            := landerDisplayCoords.x.toString,
+              y1            := landerDisplayCoords.y.toString,
+              x2            := endCoord.x.toString,
+              y2            := endCoord.y.toString,
+              pointerEvents := "none",
+              title         := s"${ray.angleDeg}°",
+            )
+          },
         ),
         renderVelocityIndicator(lander)(pointerEvents := "none"),
       )
