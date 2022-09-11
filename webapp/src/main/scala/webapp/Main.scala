@@ -3,6 +3,7 @@ package webapp
 import cats.effect.{IO, SyncIO}
 import colibri.{BehaviorSubject, Observable, Sink, Subject}
 import com.raquo.domtypes.jsdom.defs.events.TypedTargetMouseEvent
+import io.circe.syntax.EncoderOps
 import io.circe.{Decoder, Encoder}
 import org.scalajs.dom.Element
 import outwatch._
@@ -247,15 +248,15 @@ object Main {
         }
         .map { case msg @ ((_, current, previous), result) =>
           result match {
-            case EvaluationResult.AllClear =>
-            case other                     =>
+            case EvaluationResult.AllClear(_) =>
+            case other                        =>
               gameState.unsafeOnNext(GameState.Stopped(other))
           }
           msg
         }
         .mapEffect { case msg @ ((_, state, previous), result) =>
           result match {
-            case EvaluationResult.Landed =>
+            case EvaluationResult.Landed(_) =>
               val currentScore = score(level, state)
               if (currentScore > best.map(_._1.score).getOrElse(0)) {
                 storeBestRecording(level, FlightRecoder(currentScore, previous.map(_._2).toList))
@@ -263,7 +264,7 @@ object Main {
                   .as(msg)
               }
               else IO(msg)
-            case _                       => IO(msg)
+            case _                          => IO(msg)
           }
         }
         .debugLog("Simulation")
@@ -279,7 +280,7 @@ object Main {
 
     div(
       h1(s"Level ${level.name}"),
-      simulation.map { case ((_, s, previous), result) =>
+      simulation.map { case ((_, s, previous), evaluationResult) =>
         val radar        = calcShipRadar(s, level)
         val landingRadar = calcLandingAreaAccess(s, level)
 
@@ -304,10 +305,10 @@ object Main {
                     button(s"Pause", onClick.as(GameState.Paused) --> gameState)
                   case GameState.Stopped(reason) =>
                     reason match {
-                      case EvaluationResult.AllClear  => p("this shouldn't happen")
-                      case EvaluationResult.Crashed   => p("Houston, we had a problem...")
-                      case EvaluationResult.OffLimits => p("Off script is ok, but off screen...?")
-                      case EvaluationResult.Landed    => p(fontSize := "2.5rem", "🎉")
+                      case EvaluationResult.AllClear(_)  => p("this shouldn't happen")
+                      case EvaluationResult.Crashed(_)   => p("Houston, we had a problem...")
+                      case EvaluationResult.OffLimits(_) => p("Off script is ok, but off screen...?")
+                      case EvaluationResult.Landed(_)    => p(fontSize := "2.5rem", "🎉")
                     }
                 }
                 VModifier(
@@ -383,6 +384,7 @@ object Main {
                       th(textAlign.right, "landing radar GO?"),
                       th(textAlign.right, "horizontal distance to landing area"),
                       th(textAlign.right, "vertical distance to landing area"),
+                      th(textAlign.right, "distance to landing area"),
                     ),
                   ),
                   tbody(
@@ -438,27 +440,20 @@ object Main {
                       td(
                         textAlign.right,
                         width                   := "10.0%",
-                        fontFamily              := "monospace", {
-                          val isAboveLandingArea = s.x >= level.landingArea.start.x && s.x <= level.landingArea.end.x
-                          val distance           =
-                            if (isAboveLandingArea) 0.0
-                            else {
-                              val distanceToStart = math.abs(level.landingArea.start.x - s.x)
-                              val distanceToEnd   = math.abs(level.landingArea.end.x - s.x)
-                              math.min(distanceToStart, distanceToEnd)
-                            }
-                          formatNum(roundAt(2)(distance))
-                        },
+                        fontFamily              := "monospace",
+                        formatNum(roundAt(2)(evaluationResult.enrichedState.horizontalDistanceLandingArea)),
                       ),
                       td(
                         textAlign.right,
                         width                   := "10.0%",
-                        fontFamily              := "monospace", {
-
-                          val distance = s.y - level.landingArea.start.y
-
-                          formatNum(roundAt(2)(distance))
-                        },
+                        fontFamily              := "monospace",
+                        formatNum(roundAt(2)(evaluationResult.enrichedState.verticalDistanceLandingArea)),
+                      ),
+                      td(
+                        textAlign.right,
+                        width                   := "10.0%",
+                        fontFamily              := "monospace",
+                        formatNum(roundAt(2)(evaluationResult.enrichedState.distanceLandingArea)),
                       ),
                     ),
                   ),
@@ -475,6 +470,8 @@ object Main {
               landingRadar,
               uiSettings,
             ),
+            h2("Detailed State"),
+            pre(evaluationResult.enrichedState.asJson.spaces2SortKeys),
             h2("Game Log"),
             div(
               table(
@@ -547,76 +544,6 @@ object Main {
     VModifier.ifNot(isWithinLimit) {
       color := "red"
     }
-
-  case class ShipRay(ship: Vec2, ray: Line, angleDeg: Int, intersections: List[Algorithms.LineIntersection]) {
-    def maybeClosestCollisionPointAndDistance: Option[(Algorithms.LineIntersection, Double)] = intersections.map {
-      intersection =>
-        val distance = ship.-(intersection.pos).abs.length
-        intersection -> distance
-    }.minByOption(_._2)
-  }
-
-  def calcLandingAreaAccess(landerState: PreciseState, level: Level): List[ShipRay] = {
-
-    val start  = level.landingArea.start
-    val end    = level.landingArea.end
-    val middle = level.landingArea.center
-
-//    val landingSpots = List(level.landingArea.start, level.landingArea.center, level.landingArea.end)
-    val landingSpots = 0
-      .to(end = 100, step = 25)
-      .map(_ / 100.0)
-      .map { relativeAmount =>
-        start + ((end - start) * relativeAmount)
-      }
-      .toList
-
-    val ship = Vec2(landerState.x, landerState.y)
-
-    val rays = landingSpots.map { landingLocation =>
-      val radarRay   = Line(ship, landingLocation)
-      val collisions = level.surfaceLines.diff(List(level.landingArea)).flatMap { l =>
-        l.intersect(radarRay) match {
-          case Some(i) if i.onLine1 && i.onLine2 => List(i)
-          case _                                 => List.empty
-        }
-      }
-      ShipRay(ship, radarRay, 0, collisions)
-    }
-
-    rays
-  }
-
-  def calcShipRadar(landerState: PreciseState, level: Level): List[ShipRay] = {
-
-    val ship = Vec2(landerState.x, landerState.y)
-
-    // calculating the lines between ship and every corner of the map and pick the longest.
-    // no radar ray needs to be longer
-    val longestRayLength = List(
-      Vec2(0, 0),
-      Vec2(Constants.gameWidth, 0),
-      Vec2(0, Constants.gameHeight),
-      Vec2(Constants.gameWidth, Constants.gameHeight),
-    ).map(corner => Line(ship, corner))
-      .maxBy(_.length)
-
-    // create rays in 5° distance
-    val rays = 0.until(end = 360, step = 5).map { angleDeg =>
-      val radarRay = Line.apply(ship, ship + Vec2.unit(angleDeg.toRadians) * longestRayLength.length)
-
-      val collisions = level.surfaceLines.flatMap { l =>
-        l.intersect(radarRay) match {
-          case Some(i) if i.onLine1 && i.onLine2 => List(i)
-          case _                                 => List.empty
-        }
-      }
-
-      ShipRay(ship, radarRay, angleDeg, collisions)
-
-    }
-    rays.toList
-  }
 
   def toDisplayCoord(coord: Coord): Coord =
     Coord(coord.x, 3000 - coord.y)
@@ -1049,3 +976,67 @@ object UISettings {
 
 }
 case class UISettings(showRadar: Boolean, showHighScorePath: Boolean)
+
+/*
+
+lunar lander openAI gym
+
+### Observation Space
+The state is an 8-dimensional vector: the coordinates of the lander in `x` & `y`, its linear
+velocities in `x` & `y`, its angle, its angular velocity, and two booleans
+that represent whether each leg is in contact with the ground or not.
+### Rewards
+After every step a reward is granted. The total reward of an episode is the
+sum of the rewards for all the steps within that episode.
+For each step, the reward:
+- is increased/decreased the closer/further the lander is to the landing pad.
+- is increased/decreased the slower/faster the lander is moving.
+- is decreased the more the lander is tilted (angle not horizontal).
+- is increased by 10 points for each leg that is in contact with the ground.
+- is decreased by 0.03 points each frame a side engine is firing.
+- is decreased by 0.3 points each frame the main engine is firing.
+The episode receive an additional reward of -100 or +100 points for crashing or landing safely respectively.
+An episode is considered a solution if it scores at least 200 points.
+
+
+
+state = [
+0:    (pos.x - VIEWPORT_W / SCALE / 2) / (VIEWPORT_W / SCALE / 2),
+1:    (pos.y - (self.helipad_y + LEG_DOWN / SCALE)) / (VIEWPORT_H / SCALE / 2),
+2:    vel.x * (VIEWPORT_W / SCALE / 2) / FPS,
+3:    vel.y * (VIEWPORT_H / SCALE / 2) / FPS,
+4:    self.lander.angle,
+5:    20.0 * self.lander.angularVelocity / FPS,
+6:    1.0 if self.legs[0].ground_contact else 0.0,
+7:    1.0 if self.legs[1].ground_contact else 0.0,
+]
+
+assert len(state) == 8
+
+reward = 0
+shaping = (
+    -100 * np.sqrt(state[0] * state[0] + state[1] * state[1])
+    - 100 * np.sqrt(state[2] * state[2] + state[3] * state[3])
+    - 100 * abs(state[4])
+    + 10 * state[6]
+    + 10 * state[7]
+)  # And ten points for legs contact, the idea is if you
+# lose contact again after landing, you get negative reward
+if self.prev_shaping is not None:
+    reward = shaping - self.prev_shaping
+self.prev_shaping = shaping
+
+reward -= (
+    m_power * 0.30
+)  # less fuel spent is better, about -30 for heuristic landing
+reward -= s_power * 0.03
+
+terminated = False
+if self.game_over or abs(state[0]) >= 1.0:
+    terminated = True
+    reward = -100
+if not self.lander.awake:
+    terminated = True
+    reward = +100
+
+ */

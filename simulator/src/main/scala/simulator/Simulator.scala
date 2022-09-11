@@ -3,7 +3,7 @@ package simulator
 import io.circe.{Decoder, Encoder}
 import simulator.Simulator.EvaluationResult.{AllClear, Crashed, Landed, OffLimits}
 import webapp.marslander.Level
-import webapp.vectory.{Line, Vec2}
+import webapp.vectory.{Algorithms, Line, Vec2}
 
 object Simulator {
 
@@ -23,7 +23,7 @@ object Simulator {
         }
       }
 
-      def hasLanded: Boolean = {
+      def isLanded: Boolean = {
         val isAbove                  = x <= level.landingArea.end.x && x >= level.landingArea.start.x
         val isAtHeight               = y <= level.landingArea.start.y + Constants.maxLandingVerticalSpeed
         val isSlowEnoughHorizontally = math.abs(hSpeed) <= Constants.maxLandingHorizontalSpeed
@@ -32,15 +32,53 @@ object Simulator {
         isAbove && isAtHeight && isSlowEnoughHorizontally && isSlowEnoughVertically && isCorrectRotation
       }
 
-      if (y < 0 || y > Constants.gameHeight || x < 0 || x > Constants.gameWidth)
-        OffLimits
-      else if (lastOption.exists(intersectsWithSurface)) {
-        Crashed
+      val isOffLimits = y < 0 || y > Constants.gameHeight || x < 0 || x > Constants.gameWidth
+      val isCrashed   = lastOption.exists(intersectsWithSurface)
+
+      val radar        = calcShipRadar(this, level)
+      val landingRadar = calcLandingAreaAccess(this, level)
+
+      val isAboveLandingArea            = x >= level.landingArea.start.x && x <= level.landingArea.end.x
+      val horizontalDistanceLandingArea =
+        if (isAboveLandingArea) 0.0
+        else {
+          val distanceToStart = math.abs(level.landingArea.start.x - x)
+          val distanceToEnd   = math.abs(level.landingArea.end.x - x)
+          math.min(distanceToStart, distanceToEnd)
+        }
+      val verticalDistanceLandingArea   = y - level.landingArea.start.y
+
+      val enrichedState = EnrichedState(
+        x = x,
+        y = y,
+        rotation = rotate,
+        power = power,
+        fuel = fuel,
+        hSpeed = hSpeed,
+        vSpeed = vSpeed,
+        landingRadarDistances = landingRadar.map(_.maybeClosestCollisionPointAndDistance.map(_._2)),
+        horizontalDistanceLandingArea = horizontalDistanceLandingArea,
+        verticalDistanceLandingArea = verticalDistanceLandingArea,
+        distanceLandingArea = math.sqrt(
+          horizontalDistanceLandingArea * horizontalDistanceLandingArea + verticalDistanceLandingArea * verticalDistanceLandingArea,
+        ),
+        isCrashed = isCrashed,
+        isLanded = isLanded,
+        isOffLimits = isOffLimits,
+        radarDistances = radar.map(_.maybeClosestCollisionPointAndDistance.map(_._2)),
+      )
+
+      if (isOffLimits)
+        OffLimits(enrichedState)
+      else {
+        if (isCrashed) {
+          Crashed(enrichedState)
+        }
+        else if (isLanded) {
+          Landed(enrichedState)
+        }
+        else AllClear(enrichedState)
       }
-      else if (hasLanded) {
-        Landed
-      }
-      else AllClear
     }
     //    override def toString: String =
 //      s"""     x:$x
@@ -52,12 +90,38 @@ object Simulator {
 //         | power:$power""".stripMargin
   }
 
-  sealed trait EvaluationResult
-  object EvaluationResult {
-    case object AllClear  extends EvaluationResult
-    case object Crashed   extends EvaluationResult
-    case object OffLimits extends EvaluationResult
-    case object Landed    extends EvaluationResult
+  case class EnrichedState(
+    x: Double,
+    y: Double,
+    rotation: Int,
+    power: Int,
+    fuel: Int,
+    hSpeed: Double,
+    vSpeed: Double,
+    landingRadarDistances: List[Option[Double]],
+    horizontalDistanceLandingArea: Double,
+    verticalDistanceLandingArea: Double,
+    distanceLandingArea: Double,
+    isCrashed: Boolean,
+    isLanded: Boolean,
+    isOffLimits: Boolean,
+    radarDistances: List[Option[Double]],
+  )
+
+  object EnrichedState {
+    implicit val enrichedStateDecoder: Decoder[EnrichedState] = io.circe.generic.semiauto.deriveDecoder
+    implicit val enrichedStateEncoder: Encoder[EnrichedState] = io.circe.generic.semiauto.deriveEncoder
+
+  }
+
+  sealed trait EvaluationResult {
+    def enrichedState: EnrichedState
+  }
+  object EvaluationResult       {
+    case class AllClear(enrichedState: EnrichedState)  extends EvaluationResult
+    case class Crashed(enrichedState: EnrichedState)   extends EvaluationResult
+    case class OffLimits(enrichedState: EnrichedState) extends EvaluationResult
+    case class Landed(enrichedState: EnrichedState)    extends EvaluationResult
   }
 
   object PreciseState {
@@ -257,6 +321,76 @@ object Simulator {
 
   def score(level: Level, state: PreciseState): Int =
     state.fuel
+
+  def calcShipRadar(landerState: PreciseState, level: Level): List[ShipRay] = {
+
+    val ship = Vec2(landerState.x, landerState.y)
+
+    // calculating the lines between ship and every corner of the map and pick the longest.
+    // no radar ray needs to be longer
+    val longestRayLength = List(
+      Vec2(0, 0),
+      Vec2(Constants.gameWidth, 0),
+      Vec2(0, Constants.gameHeight),
+      Vec2(Constants.gameWidth, Constants.gameHeight),
+    ).map(corner => Line(ship, corner))
+      .maxBy(_.length)
+
+    // create rays in 5° distance
+    val rays = 0.until(end = 360, step = 5).map { angleDeg =>
+      val radarRay = Line.apply(ship, ship + Vec2.unit(angleDeg.toRadians) * longestRayLength.length)
+
+      val collisions = level.surfaceLines.flatMap { l =>
+        l.intersect(radarRay) match {
+          case Some(i) if i.onLine1 && i.onLine2 => List(i)
+          case _                                 => List.empty
+        }
+      }
+
+      ShipRay(ship, radarRay, angleDeg, collisions)
+
+    }
+    rays.toList
+  }
+
+  def calcLandingAreaAccess(landerState: PreciseState, level: Level): List[ShipRay] = {
+
+    val start  = level.landingArea.start
+    val end    = level.landingArea.end
+    val middle = level.landingArea.center
+
+    //    val landingSpots = List(level.landingArea.start, level.landingArea.center, level.landingArea.end)
+    val landingSpots = 0
+      .to(end = 100, step = 25)
+      .map(_ / 100.0)
+      .map { relativeAmount =>
+        start + ((end - start) * relativeAmount)
+      }
+      .toList
+
+    val ship = Vec2(landerState.x, landerState.y)
+
+    val rays = landingSpots.map { landingLocation =>
+      val radarRay   = Line(ship, landingLocation)
+      val collisions = level.surfaceLines.diff(List(level.landingArea)).flatMap { l =>
+        l.intersect(radarRay) match {
+          case Some(i) if i.onLine1 && i.onLine2 => List(i)
+          case _                                 => List.empty
+        }
+      }
+      ShipRay(ship, radarRay, 0, collisions)
+    }
+
+    rays
+  }
+
+  case class ShipRay(ship: Vec2, ray: Line, angleDeg: Int, intersections: List[Algorithms.LineIntersection]) {
+    def maybeClosestCollisionPointAndDistance: Option[(Algorithms.LineIntersection, Double)] = intersections.map {
+      intersection =>
+        val distance = ship.-(intersection.pos).abs.length
+        intersection -> distance
+    }.minByOption(_._2)
+  }
 
   case class FlightRecoder(score: Int, commands: List[GameCommand])
 
