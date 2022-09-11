@@ -10,16 +10,16 @@ jobs:
   build:
     strategy:
       matrix:
-        scalaVersion: ["2.13.8"]
-    runs-on: ubuntu-20.04
-
+        os: [ubuntu-20.04]
+        scala: [2.13.8]
+        java: [adopt@1.8]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v2
         with:
           ref: ${{ github.event.pull_request.head.sha }}
       - uses: coursier/cache-action@v6
-      - uses: olafurpg/setup-scala@v12
-
+      - uses: olafurpg/setup-scala@v13
       - name: Build
         run: sbt ++${{matrix.scalaVersion}} fullOptJS/webpack
 
