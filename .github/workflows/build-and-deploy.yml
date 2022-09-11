@@ -29,8 +29,6 @@ jobs:
 
       - name: Push to github-pages repo
         uses: cpina/github-action-push-to-another-repository@main
-        env:
-          API_TOKEN_GITHUB: ${{ secrets.API_TOKEN_GITHUB }}
         with:
           source-directory: 'webapp/target/scala-2.13/scalajs-bundler/main/dist'
           target-directory: 'static/codingame/marslander'
