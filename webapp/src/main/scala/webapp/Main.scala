@@ -1,8 +1,9 @@
 package webapp
 
 import cats.effect.{IO, SyncIO}
-import colibri.{BehaviorSubject, Observable, Subject}
+import colibri.{BehaviorSubject, Observable, Sink, Subject}
 import com.raquo.domtypes.jsdom.defs.events.TypedTargetMouseEvent
+import io.circe.{Decoder, Encoder}
 import org.scalajs.dom.Element
 import outwatch._
 import outwatch.dsl._
@@ -27,7 +28,10 @@ object Main {
 
   def app =
     div(
-      Communication.getLevels.map(renderUi),
+      for {
+        allLevels  <- Communication.getLevels
+        uiSettings <- loadUiSettings
+      } yield renderUi(allLevels, uiSettings),
     )
 
   def svgPlayground = {
@@ -63,22 +67,43 @@ object Main {
 
   def loadBestRecording(level: Level): IO[Option[FlightRecoder]] =
     IO(
-      Option(org.scalajs.dom.window.localStorage.getItem(localStorageName(level)))
+      Option(org.scalajs.dom.window.localStorage.getItem(localStorageNameLevel(level)))
         .flatMap(io.circe.parser.decode[FlightRecoder](_).toOption),
     )
 
-  def localStorageName(level: Level): String =
+  def localStorageNameLevel(level: Level): String =
     s"level-${level.name}"
 
   def storeBestRecording(level: Level, flightRecoder: FlightRecoder): IO[Unit] = {
     import io.circe.syntax._
     IO(
-      org.scalajs.dom.window.localStorage.setItem(localStorageName(level), flightRecoder.asJson.noSpacesSortKeys),
+      org.scalajs.dom.window.localStorage.setItem(localStorageNameLevel(level), flightRecoder.asJson.noSpacesSortKeys),
     )
   }
 
-  def renderUi(allLevels: List[Level]) = {
+  def loadUiSettings: IO[UISettings] = IO(
+    Option(org.scalajs.dom.window.localStorage.getItem("uiSettings"))
+      .flatMap(io.circe.parser.decode[UISettings](_).toOption)
+      .getOrElse(UISettings.default),
+  )
+
+  def storeUiSettings(uiSettings: UISettings): IO[Unit] = {
+    import io.circe.syntax._
+    IO(
+      org.scalajs.dom.window.localStorage.setItem("uiSettings", uiSettings.asJson.noSpacesSortKeys),
+    )
+  }
+
+  def renderUi(allLevels: List[Level], uiSettings: UISettings): HtmlVNode = {
     val selectedLevel = Subject.behavior(allLevels.lastOption)
+
+    val uiSettingsSub: BehaviorSubject[UISettings] = Subject.behavior(uiSettings)
+
+    uiSettingsSub.mapEffect { newValue =>
+      storeUiSettings(newValue) *> IO.pure(newValue)
+    }.unsafeForeach { newValue =>
+      println(s"stored new uiSettings: $newValue")
+    }
 
     val refreshHighscoresSub = Subject.behavior(())
 
@@ -110,7 +135,7 @@ object Main {
     }.map {
       case Some((level, maybeRecorder)) =>
         VModifier(allHighscores(allLevels).map { highScores =>
-          renderLevel(level, maybeRecorder, selectedLevel, refreshHighscoresSub)
+          renderLevel(level, maybeRecorder, selectedLevel, refreshHighscoresSub, uiSettingsSub)
         })
 
       case None => VModifier.empty
@@ -167,6 +192,7 @@ object Main {
     maybeRecorder: Option[FlightRecoder],
     selectedLevelSub: BehaviorSubject[Option[Level]],
     refreshHighScoreSub: BehaviorSubject[Unit],
+    uiSettingsSub: BehaviorSubject[UISettings],
   ): VModifier = {
 
     val initialState = PreciseState(
@@ -251,159 +277,232 @@ object Main {
 //          }
 //        })
 
-    def formatNum(n: Double): String = f"$n%1.2f"
-
     div(
       h1(s"Level ${level.name}"),
       simulation.map { case ((_, s, previous), result) =>
         val radar = calcShipRadar(s, level)
 
-        VModifier(
-          h2("Score"),
-          table(
-            thead(tr(th(textAlign.right, "Score"), th(textAlign.right, "Highscore"))),
-            tbody(tr(td(textAlign.right, score(level, s)), td(textAlign.right, best.map(_._1.score)))),
-          ),
-          div(
-            display.flex,
-            flex                   := "row",
-            VModifier.style("gap") := "3rem",
+        uiSettingsSub.map { uiSettings =>
+          VModifier(
+            h2("Score"),
+            table(
+              thead(tr(th(textAlign.right, "Score"), th(textAlign.right, "Highscore"))),
+              tbody(tr(td(textAlign.right, score(level, s)), td(textAlign.right, best.map(_._1.score)))),
+            ),
             div(
-              h2("Game Control"),
+              display.flex,
+              flex                   := "row",
+              VModifier.style("gap") := "3rem",
               div(
-                gameState.map { gs =>
-                  val gsSpecific = gs match {
-                    case GameState.Paused          =>
-                      button(s"Start", onClick.as(GameState.Running) --> gameState)
-                    case GameState.Running         =>
-                      button(s"Pause", onClick.as(GameState.Paused) --> gameState)
-                    case GameState.Stopped(reason) =>
-                      reason match {
-                        case EvaluationResult.AllClear  => p("this shouldn't happen")
-                        case EvaluationResult.Crashed   => p("Houston, we had a problem...")
-                        case EvaluationResult.OffLimits => p("Off script is ok, but off screen...?")
-                        case EvaluationResult.Landed    => p(fontSize := "2.5rem", "🎉")
-                      }
-                  }
-                  VModifier(
-                    gsSpecific,
-                    button(s"Restart", onClick.as(Some(level)) --> selectedLevelSub),
+                h2("Game Control"),
+                div(
+                  div(gameState.map { gs =>
+                    val gsSpecific = gs match {
+                      case GameState.Paused          =>
+                        button(s"Start", onClick.as(GameState.Running) --> gameState)
+                      case GameState.Running         =>
+                        button(s"Pause", onClick.as(GameState.Paused) --> gameState)
+                      case GameState.Stopped(reason) =>
+                        reason match {
+                          case EvaluationResult.AllClear  => p("this shouldn't happen")
+                          case EvaluationResult.Crashed   => p("Houston, we had a problem...")
+                          case EvaluationResult.OffLimits => p("Off script is ok, but off screen...?")
+                          case EvaluationResult.Landed    => p(fontSize := "2.5rem", "🎉")
+                        }
+                    }
+                    VModifier(
+                      gsSpecific,
+                      button(s"Restart", onClick.as(Some(level)) --> selectedLevelSub),
+                    )
+                  }),
+                  div(
+                    VModifier(
+                      label(
+                        "radar",
+                        input(
+                          typ     := "checkbox",
+                          checked := uiSettings.showRadar,
+                          onChange.checked.map(checked => uiSettings.copy(showRadar = checked)) --> uiSettingsSub,
+                        ),
+                      ),
+                      label(
+                        "high score path",
+                        input(
+                          typ     := "checkbox",
+                          checked := uiSettings.showHighScorePath,
+                          onChange.checked.map { checked =>
+                            uiSettings.copy(showHighScorePath = checked)
+                          } --> uiSettingsSub,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              div(
+                h2("Lander Control"),
+                landerControlSub.map { ctrl =>
+                  table(
+                    thead(tr(th(textAlign.right, "angle"), th(textAlign.right, "thrust"))),
+                    tbody(
+                      tr(
+                        td(textAlign.right, width := "50%", fontFamily := "monospace", roundAt(2)(ctrl.angle)),
+                        td(textAlign.right, width := "50%", fontFamily := "monospace", roundAt(2)(ctrl.thrust)),
+                      ),
+                    ),
                   )
                 },
               ),
-            ),
-            div(
-              h2("Lander Control"),
-              landerControlSub.map { ctrl =>
-                table(
-                  thead(tr(th(textAlign.right, "angle"), th(textAlign.right, "thrust"))),
-                  tbody(
-                    tr(
-                      td(textAlign.right, width := "50%", fontFamily := "monospace", roundAt(2)(ctrl.angle)),
-                      td(textAlign.right, width := "50%", fontFamily := "monospace", roundAt(2)(ctrl.thrust)),
-                    ),
-                  ),
-                )
-              },
-            ),
-            div(
-              h2("Lander State"),
               div(
-                table(
-                  thead(
-                    tr(
-                      th(textAlign.right, "x"),
-                      th(textAlign.right, "y"),
-                      th(textAlign.right, "rotation"),
-                      th(textAlign.right, "power"),
-                      th(textAlign.right, "fuel"),
-                      th(textAlign.right, "hSpeed"),
-                      th(textAlign.right, "vSpeed"),
-                      th(textAlign.right, "closest distance"),
-                      th(textAlign.right, "radars"),
-                    ),
-                  ),
-                  tbody(
-                    tr(
-                      td(textAlign.right, width := "10.0%", fontFamily := "monospace", formatNum(roundAt(2)(s.x))),
-                      td(textAlign.right, width := "10.0%", fontFamily := "monospace", formatNum(roundAt(2)(s.y))),
-                      td(textAlign.right, width := "10.0%", fontFamily := "monospace", s.rotate),
-                      td(textAlign.right, width := "10.0%", fontFamily := "monospace", s.power),
-                      td(textAlign.right, width := "10.0%", fontFamily := "monospace", s.fuel),
-                      td(textAlign.right, width := "10.0%", fontFamily := "monospace", formatNum(roundAt(2)(s.hSpeed))),
-                      td(textAlign.right, width := "10.0%", fontFamily := "monospace", formatNum(roundAt(2)(s.vSpeed))),
-                      td(
-                        textAlign.right,
-                        width                   := "10.0%",
-                        fontFamily              := "monospace", {
-                          val collidingRays: List[(Algorithms.LineIntersection, Double)] =
-                            radar.flatMap(_.maybeClosestCollisionPointAndDistance)
-                          val closestDistance                                            = collidingRays.map(_._2).minOption
-                          val foo: String                                                = closestDistance.map(d => formatNum(roundAt(2)(d))).getOrElse("---")
-                          foo
-                        },
+                h2("Lander State"),
+                div(
+                  table(
+                    thead(
+                      tr(
+                        th(textAlign.right, "x"),
+                        th(textAlign.right, "y"),
+                        th(textAlign.right, "rotation"),
+                        th(textAlign.right, "power"),
+                        th(textAlign.right, "fuel"),
+                        th(textAlign.right, "hSpeed"),
+                        th(textAlign.right, "vSpeed"),
+                        th(textAlign.right, "suicide burn height at curr vV"),
+                        th(textAlign.right, "closest radar distance"),
+                        th(textAlign.right, "radars"),
                       ),
-                      td(textAlign.right, width := "10.0%", fontFamily := "monospace", "???"),
+                    ),
+                    tbody(
+                      tr(
+                        td(textAlign.right, width := "10.0%", fontFamily := "monospace", formatNum(roundAt(2)(s.x))),
+                        td(textAlign.right, width := "10.0%", fontFamily := "monospace", formatNum(roundAt(2)(s.y))),
+                        td(
+                          textAlign.right,
+                          width                   := "10%",
+                          fontFamily              := "monospace",
+                          redIfOutOfLimits(s.rotate == 0),
+                          formatNum(roundAt(2)(s.rotate)),
+                        ),
+                        td(textAlign.right, width := "10.0%", fontFamily := "monospace", s.power),
+                        td(textAlign.right, width := "10.0%", fontFamily := "monospace", s.fuel),
+                        td(
+                          textAlign.right,
+                          width                   := "10%",
+                          fontFamily              := "monospace",
+                          redIfOutOfLimits(math.abs(s.hSpeed) < Constants.maxLandingHorizontalSpeed),
+                          formatNum(roundAt(2)(s.hSpeed)),
+                        ),
+                        td(
+                          textAlign.right,
+                          width                   := "10%",
+                          fontFamily              := "monospace",
+                          redIfOutOfLimits(math.abs(s.vSpeed) < Constants.maxLandingVerticalSpeed),
+                          formatNum(roundAt(2)(s.vSpeed)),
+                        ),
+                        td(
+                          textAlign.right,
+                          width                   := "10.0%",
+                          fontFamily              := "monospace",
+                          calcSuicideBurnHeight(s, level),
+                        ),
+                        td(
+                          textAlign.right,
+                          width                   := "10.0%",
+                          fontFamily              := "monospace", {
+                            val collidingRays: List[(Algorithms.LineIntersection, Double)] =
+                              radar.flatMap(_.maybeClosestCollisionPointAndDistance)
+                            val closestDistance                                            = collidingRays.map(_._2).minOption
+                            val foo: String                                                = closestDistance.map(d => formatNum(roundAt(2)(d))).getOrElse("---")
+                            foo
+                          },
+                        ),
+                        td(textAlign.right, width := "10.0%", fontFamily := "monospace", "???"),
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
-          ),
-          renderLevelGraphic(
-            level,
-            s,
-            previous.map(_._1),
-            landerControlSub,
-            best.map(_._2).getOrElse(List.empty),
-            radar,
-          ),
-          h2("Game Log"),
-          div(
-            table(
-              thead(
-                tr(
-                  th(textAlign.right, "tick"),
-                  th(textAlign.right, "x"),
-                  th(textAlign.right, "y"),
-                  th(textAlign.right, "rotation"),
-                  th(textAlign.right, "power"),
-                  th(textAlign.right, "fuel"),
-                  th(textAlign.right, "hSpeed"),
-                  th(textAlign.right, "vSpeed"),
-                  th(textAlign.right, "power cmd"),
-                  th(textAlign.right, "rotation cmd"),
+            renderLevelGraphic(
+              level,
+              s,
+              previous.map(_._1),
+              landerControlSub,
+              best.map(_._2).getOrElse(List.empty),
+              radar,
+              uiSettings,
+            ),
+            h2("Game Log"),
+            div(
+              table(
+                thead(
+                  tr(
+                    th(textAlign.right, "tick"),
+                    th(textAlign.right, "x"),
+                    th(textAlign.right, "y"),
+                    th(textAlign.right, "rotation"),
+                    th(textAlign.right, "power"),
+                    th(textAlign.right, "fuel"),
+                    th(textAlign.right, "hSpeed"),
+                    th(textAlign.right, "vSpeed"),
+                    th(textAlign.right, "power cmd"),
+                    th(textAlign.right, "rotation cmd"),
+                  ),
+                ),
+                tbody(
+                  previous.map { case (oldS, gc) => (oldS, Some(gc)) }
+                    .enqueue(s -> None)
+                    .zipWithIndex
+                    .map { case ((s, gc), tick) =>
+                      val powerStr    = gc.map(x => x.power.toString).getOrElse("---")
+                      val rotationStr = gc.map(x => x.rotation.toString).getOrElse("---")
+                      tr(
+                        td(textAlign.right, width := "10%", fontFamily := "monospace", tick),
+                        td(textAlign.right, width := "10%", fontFamily := "monospace", formatNum(roundAt(2)(s.x))),
+                        td(textAlign.right, width := "10%", fontFamily := "monospace", formatNum(roundAt(2)(s.y))),
+                        td(
+                          textAlign.right,
+                          width                   := "10%",
+                          fontFamily              := "monospace",
+                          redIfOutOfLimits(s.rotate == 0),
+                          formatNum(roundAt(2)(s.rotate)),
+                        ),
+                        td(textAlign.right, width := "10%", fontFamily := "monospace", s.power),
+                        td(textAlign.right, width := "10%", fontFamily := "monospace", s.fuel),
+                        td(
+                          textAlign.right,
+                          width                   := "10%",
+                          fontFamily              := "monospace",
+                          redIfOutOfLimits(math.abs(s.hSpeed) < Constants.maxLandingHorizontalSpeed),
+                          formatNum(roundAt(2)(s.hSpeed)),
+                        ),
+                        td(
+                          textAlign.right,
+                          width                   := "10%",
+                          fontFamily              := "monospace",
+                          redIfOutOfLimits(math.abs(s.vSpeed) < Constants.maxLandingVerticalSpeed),
+                          formatNum(roundAt(2)(s.vSpeed)),
+                        ),
+                        td(textAlign.right, width := "10%", fontFamily := "monospace", powerStr),
+                        td(textAlign.right, width := "10%", fontFamily := "monospace", rotationStr),
+                      )
+                    },
                 ),
               ),
-              tbody(
-                previous.map { case (oldS, gc) => (oldS, Some(gc)) }
-                  .enqueue(s -> None)
-                  .zipWithIndex
-                  .map { case ((s, gc), tick) =>
-                    val powerStr    = gc.map(x => x.power.toString).getOrElse("---")
-                    val rotationStr = gc.map(x => x.rotation.toString).getOrElse("---")
-                    tr(
-                      td(textAlign.right, width := "10%", fontFamily := "monospace", tick),
-                      td(textAlign.right, width := "10%", fontFamily := "monospace", formatNum(roundAt(2)(s.x))),
-                      td(textAlign.right, width := "10%", fontFamily := "monospace", formatNum(roundAt(2)(s.y))),
-                      td(textAlign.right, width := "10%", fontFamily := "monospace", formatNum(roundAt(2)(s.rotate))),
-                      td(textAlign.right, width := "10%", fontFamily := "monospace", s.power),
-                      td(textAlign.right, width := "10%", fontFamily := "monospace", s.fuel),
-                      td(textAlign.right, width := "10%", fontFamily := "monospace", formatNum(roundAt(2)(s.hSpeed))),
-                      td(textAlign.right, width := "10%", fontFamily := "monospace", formatNum(roundAt(2)(s.vSpeed))),
-                      td(textAlign.right, width := "10%", fontFamily := "monospace", powerStr),
-                      td(textAlign.right, width := "10%", fontFamily := "monospace", rotationStr),
-                    )
-                  },
-              ),
             ),
-          ),
-          h2("Game Input"),
-          pre(level.toInputLines.mkString("\n")),
-        )
+            h2("Game Input"),
+            pre(level.toInputLines.mkString("\n")),
+          )
+        }
       },
     )
   }
+
+  def formatNum(n: Double): String = f"$n%1.2f"
+
+  def redIfOutOfLimits(isWithinLimit: Boolean): VModifier =
+    VModifier.ifNot(isWithinLimit) {
+      color := "red"
+    }
 
   case class ShipRay(ship: Vec2, ray: Line, angleDeg: Int, intersections: List[Algorithms.LineIntersection]) {
     def maybeClosestCollisionPointAndDistance: Option[(Algorithms.LineIntersection, Double)] = intersections.map {
@@ -416,13 +515,21 @@ object Main {
 
   def calcShipRadar(landerState: PreciseState, level: Level): List[ShipRay] = {
 
-    val ship            = Vec2(landerState.x, landerState.y)
-    val gameMapDiagonal =
-      math.sqrt(Constants.gameHeight * Constants.gameHeight + Constants.gameWidth * Constants.gameWidth)
+    val ship = Vec2(landerState.x, landerState.y)
+
+    // calculating the lines between ship and every corner of the map and pick the longest.
+    // no radar ray needs to be longer
+    val longestRayLength = List(
+      Vec2(0, 0),
+      Vec2(Constants.gameWidth, 0),
+      Vec2(0, Constants.gameHeight),
+      Vec2(Constants.gameWidth, Constants.gameHeight),
+    ).map(corner => Line(ship, corner))
+      .maxBy(_.length)
 
     // create rays in 5° distance
     val rays = 0.until(end = 360, step = 5).map { angleDeg =>
-      val radarRay = Line.apply(ship, ship + Vec2.unit(angleDeg) * gameMapDiagonal)
+      val radarRay = Line.apply(ship, ship + Vec2.unit(angleDeg.toRadians) * longestRayLength.length)
 
       val collisions = level.surfaceLines.flatMap { l =>
         l.intersect(radarRay) match {
@@ -628,6 +735,7 @@ object Main {
     landerControl: BehaviorSubject[MouseControlState],
     highScorePath: List[PreciseState],
     radar: List[ShipRay],
+    uiSettings: UISettings,
   ) = {
     import svg._
     val allCoords =
@@ -645,23 +753,27 @@ object Main {
         g(
           Rocket.rocketWithFlame(lander.power, Vec2(landerDisplayCoords.x, landerDisplayCoords.y), lander.rotate, 200),
         ),
-        g(
-          radar.map { ray =>
-            val isColliding = ray.maybeClosestCollisionPointAndDistance.isDefined
-            val end         = ray.maybeClosestCollisionPointAndDistance.map(_._1.pos).getOrElse(ray.ray.end)
+        VModifier.ifTrue(uiSettings.showRadar)(
+          g(
+            idAttr := "radarRays",
+            radar.map { ray =>
+              val isColliding = ray.maybeClosestCollisionPointAndDistance.isDefined
+              val end         = ray.maybeClosestCollisionPointAndDistance.map(_._1.pos).getOrElse(ray.ray.end)
 
-            val endCoord =
-              toDisplayCoord(Coord(PreciseState.myRound(end.x), PreciseState.myRound(end.y)))
-            line(
-              stroke        := (if (isColliding) "red" else "green"),
-              strokeWidth   := "2",
-              x1            := landerDisplayCoords.x.toString,
-              y1            := landerDisplayCoords.y.toString,
-              x2            := endCoord.x.toString,
-              y2            := endCoord.y.toString,
-              pointerEvents := "none",
-            )
-          },
+              val endCoord =
+                toDisplayCoord(Coord(PreciseState.myRound(end.x), PreciseState.myRound(end.y)))
+              line(
+                stroke        := (if (isColliding) "red" else "green"),
+                strokeWidth   := "2",
+                x1            := landerDisplayCoords.x.toString,
+                y1            := landerDisplayCoords.y.toString,
+                x2            := endCoord.x.toString,
+                y2            := endCoord.y.toString,
+                pointerEvents := "none",
+                title         := s"${ray.angleDeg}°",
+              )
+            },
+          ),
         ),
         renderVelocityIndicator(lander)(pointerEvents := "none"),
       )
@@ -698,23 +810,37 @@ object Main {
           strokeWidth   := "3",
           pointerEvents := "none",
         ),
-        simulationSteps.map { locations =>
-          locations.map { case Coord(x, y) =>
-            circle(cx := x.toString, cy := y.toString, r := "10", fill := "black", pointerEvents := "none")
-          }
-        },
-        previous
-          .map(toRoundedState)
-          .map(s => toDisplayCoord(Coord(s.x, s.y)))
-          .map { case Coord(x, y) =>
-            circle(cx := x.toString, cy := y.toString, r := "10", fill := "lightgreen", pointerEvents := "none")
-          },
-        highScorePath
-          .map(toRoundedState)
-          .map(s => toDisplayCoord(Coord(s.x, s.y)))
-          .map { case Coord(x, y) =>
-            circle(cx := x.toString, cy := y.toString, r := "5", fill := "darkred", pointerEvents := "none")
-          },
+        g(
+          idAttr        := "currentPath",
+          g(
+            idAttr := "predictedPath",
+            simulationSteps.map { locations =>
+              locations.map { case Coord(x, y) =>
+                circle(cx := x.toString, cy := y.toString, r := "10", fill := "black", pointerEvents := "none")
+              }
+            },
+          ),
+          g(
+            idAttr := "alreadyTravelledPath",
+            previous
+              .map(toRoundedState)
+              .map(s => toDisplayCoord(Coord(s.x, s.y)))
+              .map { case Coord(x, y) =>
+                circle(cx := x.toString, cy := y.toString, r := "10", fill := "lightgreen", pointerEvents := "none")
+              },
+          ),
+        ),
+        VModifier.ifTrue(uiSettings.showHighScorePath)(
+          g(
+            idAttr := "highScorePath",
+            highScorePath
+              .map(toRoundedState)
+              .map(s => toDisplayCoord(Coord(s.x, s.y)))
+              .map { case Coord(x, y) =>
+                circle(cx := x.toString, cy := y.toString, r := "5", fill := "darkred", pointerEvents := "none")
+              },
+          ),
+        ),
 
         //        rays.map { case ShipRay(surfacePoint, ship, ray, intersections) =>
 //          val start = landerDisplayCoords
@@ -817,3 +943,14 @@ relY: $relY
   }
 
 }
+
+object Foo {}
+
+object UISettings {
+  val default: UISettings = UISettings(showRadar = false, showHighScorePath = true)
+
+  implicit val landerInitialStateDecoder: Decoder[UISettings] = io.circe.generic.semiauto.deriveDecoder
+  implicit val landerInitialStateEncoder: Encoder[UISettings] = io.circe.generic.semiauto.deriveEncoder
+
+}
+case class UISettings(showRadar: Boolean, showHighScorePath: Boolean)

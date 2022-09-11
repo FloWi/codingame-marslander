@@ -204,7 +204,55 @@ object Simulator {
     if (newThrust < Constants.minThrust) Constants.minThrust
     else if (newThrust > Constants.maxThrust) Constants.maxThrust
     else newThrust
+  }
 
+  def calcSuicideBurnHeight(preciseState: PreciseState, level: Level): Double = {
+    val d = calcSuicideBurnDistance(preciseState.vSpeed)
+    val h = level.landingArea.y1 + d
+
+//    println(s"level.landingArea.y1 = ${level.landingArea.y1}")
+//    println(s"preciseState.vSpeed = ${preciseState.vSpeed}")
+//    println(s"suicide d = $d")
+//    println(s"suicide h = $h")
+    h
+  }
+
+  def calcSuicideBurnDistance(vVertical: Double): Double = {
+    /*
+    Distance to ground:
+    1000m
+
+                vSpeed: -50
+            max vSpeed: -40
+          diff to kill: -10
+    max thrust upwards: 4
+               gravity: -3,711
+
+    max verticalAcc: 4-3,711 = 0,289
+
+    v = v0 + a*t
+    t = (v-v0)/a
+    v = -40 (we'd use 0 if we want to slow down completely - we use the maximum allowed vSpeed)
+
+    t = (-40 - -50) / 0,289
+    t = 34,6s
+
+
+    Lastly we want to know how far we will go in that time. Under constant acceleration
+    dist = v_avg * t
+    v_avg = (v0 + v) / 2
+
+    dist = ((v0 + v) / 2) * ((v-v0)/a)
+
+    dist = ((-40 + -50) / 2) * ((-50 - -40) / 0,289)
+    dist = 1557,1m
+     */
+
+    val v0 = -Constants.maxLandingVerticalSpeed.toDouble
+    val v  = vVertical
+    val a  = -(Constants.maxThrust - Constants.g)
+
+    ((v0 + v) / 2) * ((v - v0) / a)
   }
 
   def score(level: Level, state: PreciseState): Int =
