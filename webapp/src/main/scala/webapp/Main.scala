@@ -435,7 +435,7 @@ object Main {
                         textAlign.right,
                         width                   := "10.0%",
                         fontFamily              := "monospace",
-                        landingRadar.map(_.maybeClosestCollisionPointAndDistance.isEmpty.toString).mkString("|"),
+                        landingRadar.map(_.maybeNearestCollision.isEmpty.toString).mkString("|"),
                       ),
                       td(
                         textAlign.right,
@@ -736,7 +736,7 @@ object Main {
     landerControl: BehaviorSubject[MouseControlState],
     highScorePath: List[PreciseState],
     radar: List[ShipRay],
-    landingRadar: List[ShipRay],
+    landingRadar: List[LandingRadarRay],
     uiSettings: UISettings,
   ) = {
     import svg._
@@ -780,8 +780,8 @@ object Main {
         g(
           idAttr                                      := "landingRadarRays",
           landingRadar.map { ray =>
-            val isColliding = ray.maybeClosestCollisionPointAndDistance.isDefined
-            val end         = ray.ray.end
+            val isColliding = ray.maybeNearestCollision.isDefined
+            val end         = ray.landingAreaLocation
 
             val endCoord =
               toDisplayCoord(Coord(PreciseState.myRound(end.x), PreciseState.myRound(end.y)))
@@ -793,7 +793,6 @@ object Main {
               x2            := endCoord.x.toString,
               y2            := endCoord.y.toString,
               pointerEvents := "none",
-              title         := s"${ray.angleDeg}°",
             )
           },
         ),
