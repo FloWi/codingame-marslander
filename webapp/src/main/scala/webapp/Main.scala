@@ -472,6 +472,8 @@ object Main {
             ),
             h2("Detailed State"),
             pre(evaluationResult.enrichedState.asJson.spaces2SortKeys),
+            h2("Detailed Flattened State"),
+            pre(evaluationResult.enrichedState.flattened.asJson.spaces2SortKeys),
             h2("Game Log"),
             div(
               table(
@@ -1038,4 +1040,23 @@ if not self.lander.awake:
     terminated = True
     reward = +100
 
+ */
+
+/*
+distanceLandingArea
+fuel
+hSpeed
+horizontalDistanceLandingArea
+isCrashed
+isLanded
+isOffLimits
+isOutOfFuel
+landingRadarDistances
+power
+radarDistances
+rotation
+vSpeed
+verticalDistanceLandingArea
+x
+y
  */

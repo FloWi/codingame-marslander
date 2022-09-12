@@ -28,9 +28,11 @@ object Main extends IOApp {
     } yield result
 
   def printLevelInfo(level: Level): IO[Unit] =
-    Console[IO].println(level.initialState.surfaceN) *> level.initialState.surfaceCoords.traverse_ { case Coord(x, y) =>
-      Console[IO].println(s"$x $y")
-    }
+    Console[IO].println(s"Level: ${level.name}") *>
+      Console[IO].println(level.initialState.surfaceN) *>
+      level.initialState.surfaceCoords.traverse_ { case Coord(x, y) =>
+        Console[IO].println(s"$x $y")
+      }
 
   def repl(level: Level): IO[ExitCode] = {
     val initialState = PreciseState(
@@ -75,7 +77,7 @@ object Main extends IOApp {
     }
 
   def printState(preciseState: PreciseState, evaluationResult: EvaluationResult): IO[Unit] =
-    Console[IO].println(s"${evaluationResult.enrichedState.asJson.noSpacesSortKeys}")
+    Console[IO].println(s"${evaluationResult.enrichedState.flattened.asJson.noSpacesSortKeys}")
 
   val readline =
     readlineMod.createInterface(process.stdin.asInstanceOf[ReadableStream], process.stdout.asInstanceOf[WritableStream])

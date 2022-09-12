@@ -1,6 +1,7 @@
 package simulator
 
-import io.circe.{Decoder, Encoder}
+import io.circe.syntax.EncoderOps
+import io.circe.{Decoder, Encoder, JsonNumber, JsonObject}
 import simulator.Simulator.EvaluationResult.{AllClear, Crashed, Landed, OffLimits}
 import webapp.marslander.Level
 import webapp.vectory.{Algorithms, Line, Vec2}
@@ -116,6 +117,43 @@ object Simulator {
   ) {
     val isBad: Boolean   = isCrashed || isOffLimits || isOutOfFuel
     val isGoing: Boolean = !isLanded && !isBad
+
+    def flattened: JsonObject = {
+      val map = Map(
+        "x" -> x.asJson,
+        "y" -> y.asJson,
+        "rotation" -> rotation.asJson,
+        "power" -> power.asJson,
+        "fuel" -> fuel.asJson,
+        "hSpeed" -> hSpeed.asJson,
+        "vSpeed" -> vSpeed.asJson,
+        "horizontalDistanceLandingArea" -> horizontalDistanceLandingArea.asJson,
+        "verticalDistanceLandingArea" -> verticalDistanceLandingArea.asJson,
+        "distanceLandingArea" -> distanceLandingArea.asJson,
+        "isCrashed" -> isCrashed.asJson,
+        "isLanded" -> isLanded.asJson,
+        "isOffLimits" -> isOffLimits.asJson,
+        "isOutOfFuel" -> isOutOfFuel.asJson,
+      )
+
+      val landingRadars = landingRadarDistances.flatMap { lr =>
+        val percent = (lr.percentX * 100).toInt
+        List(
+          s"landing-distance-$percent" -> lr.distance.asJson,
+          s"landing-path-free-$percent" -> lr.maybeNearestCollision.isEmpty.asJson,
+        ).toMap
+      }.toMap
+      val radars = radarDistances.flatMap { r =>
+        List(
+          s"radar-maybe-intersection-distance-${r.angleDeg}" -> r.maybeIntersectionDistance.asJson,
+        ).toMap
+      }.toMap
+
+      JsonObject.fromMap(map ++ landingRadars ++ radars)
+
+    }
+
+
   }
 
   case class RadarRay(angleDeg: Int, maybeIntersectionDistance: Option[Double])
