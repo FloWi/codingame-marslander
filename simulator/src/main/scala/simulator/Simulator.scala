@@ -34,6 +34,7 @@ object Simulator {
 
       val isOffLimits = y < 0 || y > Constants.gameHeight || x < 0 || x > Constants.gameWidth
       val isCrashed   = lastOption.exists(intersectsWithSurface)
+      val isOutOfFuel = fuel <= 0
 
       val radar        = calcShipRadar(this, level)
       val landingRadar = calcLandingAreaAccess(this, level)
@@ -65,6 +66,7 @@ object Simulator {
         isCrashed = isCrashed,
         isLanded = isLanded,
         isOffLimits = isOffLimits,
+        isOutOfFuel = isOutOfFuel,
         radarDistances = radar.map(_.maybeClosestCollisionPointAndDistance.map(_._2)),
       )
 
@@ -105,8 +107,13 @@ object Simulator {
     isCrashed: Boolean,
     isLanded: Boolean,
     isOffLimits: Boolean,
+    isOutOfFuel: Boolean,
     radarDistances: List[Option[Double]],
-  )
+  ) {
+    val isBad: Boolean   = isCrashed || isOffLimits || isOutOfFuel
+    val isGoing: Boolean = !isLanded && !isBad
+
+  }
 
   object EnrichedState {
     implicit val enrichedStateDecoder: Decoder[EnrichedState] = io.circe.generic.semiauto.deriveDecoder
@@ -168,18 +175,24 @@ object Simulator {
     val maxRotationTurnDelta      = 15
   }
 
-  case class SimulationStepInput(initialState: Level, state: PreciseState, command: GameCommand)
+  case class SimulationStepInput(level: Level, state: PreciseState, command: GameCommand)
 
   def runUntilCrashed(input: SimulationStepInput): List[PreciseState] =
     LazyList
       .from(0)
-      .scanLeft(input.state) { (current, _) =>
-        simulate(input.copy(state = current))
+      .scanLeft((Option.empty[PreciseState], input.state)) { case ((old, current), _) =>
+        val newState = simulate(input.copy(state = current))
+        (Some(current), newState)
       }
+      .map { case (old, current) => (old, current, current.evaluate(input.level, old)) }
       .takeWhile { s =>
-        s.fuel >= 0 && s.x >= 0 && s.x <= Constants.gameWidth &&
-        s.y >= 0 && s.y <= Constants.gameHeight
+        val result = s._3.enrichedState
+//        println("===================== runUntilCrashed =====================")
+//        println(s"old: ${s._1.map(old => (old.x, old.y))}, new: ${(s._2.x, s._2.y)}")
+//        println(s._3)
+        result.isGoing
       }
+      .map(_._2)
       .toList
   def simulate(input: SimulationStepInput): PreciseState              = {
 
