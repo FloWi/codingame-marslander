@@ -386,7 +386,7 @@ object Simulator {
         }
       }
 
-      ShipRay(ship, radarRay, angleDeg, collisions)
+      ShipRay(ship, radarRay, angleDeg - 90, collisions)
 
     }
     rays.toList
