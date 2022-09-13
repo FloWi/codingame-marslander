@@ -18,14 +18,7 @@ object Main extends IOApp {
     //    asJson[List[Level]]
     //
 
-    for {
-      random    <- Random.scalaUtilRandomSeedInt[IO](42)
-      allLevels <- readLevels
-      randomLevel <- Random[IO](random).shuffleList(allLevels).map(_.head) // let it crash
-
-      result <- repl(randomLevel)
-
-    } yield result
+    repl.foreverM
 
   def printLevelInfo(level: Level): IO[Unit] =
     Console[IO].println(s"Level: ${level.name}") *>
@@ -34,7 +27,24 @@ object Main extends IOApp {
         Console[IO].println(s"$x $y")
       }
 
-  def repl(level: Level): IO[ExitCode] = {
+  def askQuestion(question: String): IO[String] =
+    for {
+      _      <- Console[IO].println(question)
+      answer <- askUser
+    } yield answer
+
+  def askSeed: IO[Int] =
+    askQuestion("Enter seed: ").map(_.toIntOption).iterateUntil(_.isDefined).map(_.get)
+
+  def getRandomLevel(seed: Int): IO[Level] = for {
+    random    <- Random.scalaUtilRandomSeedInt[IO](seed)
+    allLevels <- readLevels
+    randomLevel <- Random[IO](random).shuffleList(allLevels).map(_.head) // let it crash
+  } yield randomLevel
+
+  def repl = askSeed.flatMap(getRandomLevel).flatMap(levelRepl)
+
+  def levelRepl(level: Level): IO[EvaluationResult] = {
     val initialState = PreciseState(
       x = level.landerInitialState.x,
       y = level.landerInitialState.y,
@@ -53,14 +63,19 @@ object Main extends IOApp {
     IO.fromEither(io.circe.parser.decode[List[Level]](Levels.json))
   }
 
-  def loop(level: Level, preciseState: PreciseState): IO[ExitCode] =
-    step(level, preciseState).flatMap {
-      case Left((evRes: EvaluationResult.Landed, state))    => printState(state, evRes) *> IO(ExitCode.Success)
-      case Left((evRes: EvaluationResult.Crashed, state))   =>
-        printState(state, evRes) *> Console[IO].errorln("Crashed") *> IO(ExitCode.Error)
-      case Left((evRes: EvaluationResult.OffLimits, state)) =>
-        printState(state, evRes) *> Console[IO].errorln("OffLimits") *> IO(ExitCode.Error)
-      case Right(state)                                     => loop(level, state)
+  def loop(level: Level, preciseState: PreciseState): IO[EvaluationResult] =
+    step(level, preciseState).flatMap { either =>
+      either match {
+        case Right(state)         => loop(level, state)
+        case Left((evRes, state)) => printState(state, evRes) *> IO.pure(evRes) // never pollute stdout with infos
+//          evRes match {
+//            case _: EvaluationResult.Landed    => printState(state, evRes) *> IO.pure(evRes)
+//            case _: EvaluationResult.Crashed   => Console[IO].println("Crashed") *> IO.pure(evRes)
+//            case _: EvaluationResult.OffLimits => Console[IO].println("OffLimits") *> IO.pure(evRes)
+//          case EvaluationResult.AllClear(enrichedState) => ???
+//          }
+      }
+
     }
 
   def step(level: Level, oldState: PreciseState): IO[Either[(EvaluationResult, PreciseState), PreciseState]] =

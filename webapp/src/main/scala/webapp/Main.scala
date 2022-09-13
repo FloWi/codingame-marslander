@@ -385,6 +385,7 @@ object Main {
                       th(textAlign.right, "horizontal distance to landing area"),
                       th(textAlign.right, "vertical distance to landing area"),
                       th(textAlign.right, "distance to landing area"),
+                      th(textAlign.right, "collision distance on current trajectory"),
                     ),
                   ),
                   tbody(
@@ -454,6 +455,13 @@ object Main {
                         width                   := "10.0%",
                         fontFamily              := "monospace",
                         formatNum(roundAt(2)(evaluationResult.enrichedState.distanceLandingArea)),
+                      ),
+                      td(
+                        textAlign.right,
+                        width                   := "10.0%",
+                        fontFamily              := "monospace",
+                        evaluationResult.enrichedState.collisionDistanceOnCurrentTrajectory
+                          .map(n => formatNum(roundAt(2)(n))),
                       ),
                     ),
                   ),

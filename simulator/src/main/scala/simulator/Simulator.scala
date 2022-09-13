@@ -14,9 +14,9 @@ object Simulator {
   }
   case class PreciseState(x: Double, y: Double, hSpeed: Double, vSpeed: Double, fuel: Int, rotate: Int, power: Int) {
     def evaluate(level: Level, lastOption: Option[PreciseState]): EvaluationResult = {
+      val now = Vec2(x, y)
 
       def intersectsWithSurface(previous: PreciseState): Boolean = {
-        val now              = Vec2(x, y)
         val prev             = Vec2(previous.x, previous.y)
         val connectingVector = Line(prev, now)
         level.surfaceLines.exists { surfaceLine =>
@@ -52,6 +52,15 @@ object Simulator {
         }
       val verticalDistanceLandingArea   = y - level.landingArea.start.y
 
+      val speedVector = Vec2(hSpeed, vSpeed).normalized * longestRayToCornerOfMap(now).length
+
+      val maybeCollisionDistanceOnCurrentTrajectory = {
+        val radarRay: Line = Line.apply(now, now + speedVector)
+        val collisions     = calcCollisions(level, radarRay)
+        val trajectoryRay  = ShipRay(now, radarRay, -1, collisions)
+        trajectoryRay.maybeClosestCollisionPointAndDistance.map(_._2)
+      }
+
       val enrichedState = EnrichedState(
         x = x,
         y = y,
@@ -73,6 +82,7 @@ object Simulator {
         radarDistances = radar.map { ray =>
           RadarRay(ray.angleDeg, ray.maybeClosestCollisionPointAndDistance.map(_._2))
         },
+        maybeCollisionDistanceOnCurrentTrajectory,
       )
 
       if (isOffLimits)
@@ -114,36 +124,38 @@ object Simulator {
     isOffLimits: Boolean,
     isOutOfFuel: Boolean,
     radarDistances: List[RadarRay],
+    collisionDistanceOnCurrentTrajectory: Option[Double],
   ) {
     val isBad: Boolean   = isCrashed || isOffLimits || isOutOfFuel
     val isGoing: Boolean = !isLanded && !isBad
 
     def flattened: JsonObject = {
       val map = Map(
-        "x" -> x.asJson,
-        "y" -> y.asJson,
-        "rotation" -> rotation.asJson,
-        "power" -> power.asJson,
-        "fuel" -> fuel.asJson,
-        "hSpeed" -> hSpeed.asJson,
-        "vSpeed" -> vSpeed.asJson,
-        "horizontalDistanceLandingArea" -> horizontalDistanceLandingArea.asJson,
-        "verticalDistanceLandingArea" -> verticalDistanceLandingArea.asJson,
-        "distanceLandingArea" -> distanceLandingArea.asJson,
-        "isCrashed" -> isCrashed.asJson,
-        "isLanded" -> isLanded.asJson,
-        "isOffLimits" -> isOffLimits.asJson,
-        "isOutOfFuel" -> isOutOfFuel.asJson,
+        "x"                                    -> x.asJson,
+        "y"                                    -> y.asJson,
+        "rotation"                             -> rotation.asJson,
+        "power"                                -> power.asJson,
+        "fuel"                                 -> fuel.asJson,
+        "hSpeed"                               -> hSpeed.asJson,
+        "vSpeed"                               -> vSpeed.asJson,
+        "horizontalDistanceLandingArea"        -> horizontalDistanceLandingArea.asJson,
+        "verticalDistanceLandingArea"          -> verticalDistanceLandingArea.asJson,
+        "distanceLandingArea"                  -> distanceLandingArea.asJson,
+        "isCrashed"                            -> isCrashed.asJson,
+        "isLanded"                             -> isLanded.asJson,
+        "isOffLimits"                          -> isOffLimits.asJson,
+        "isOutOfFuel"                          -> isOutOfFuel.asJson,
+        "collisionDistanceOnCurrentTrajectory" -> collisionDistanceOnCurrentTrajectory.asJson,
       )
 
       val landingRadars = landingRadarDistances.flatMap { lr =>
         val percent = (lr.percentX * 100).toInt
         List(
-          s"landing-distance-$percent" -> lr.distance.asJson,
+          s"landing-distance-$percent"  -> lr.distance.asJson,
           s"landing-path-free-$percent" -> lr.maybeNearestCollision.isEmpty.asJson,
         ).toMap
       }.toMap
-      val radars = radarDistances.flatMap { r =>
+      val radars        = radarDistances.flatMap { r =>
         List(
           s"radar-maybe-intersection-distance-${r.angleDeg}" -> r.maybeIntersectionDistance.asJson,
         ).toMap
@@ -152,7 +164,6 @@ object Simulator {
       JsonObject.fromMap(map ++ landingRadars ++ radars)
 
     }
-
 
   }
 
@@ -399,36 +410,40 @@ object Simulator {
   def score(level: Level, state: PreciseState): Int =
     state.fuel
 
+  def longestRayToCornerOfMap(ship: Vec2): Line = List(
+    Vec2(0, 0),
+    Vec2(Constants.gameWidth, 0),
+    Vec2(0, Constants.gameHeight),
+    Vec2(Constants.gameWidth, Constants.gameHeight),
+  ).map(corner => Line(ship, corner))
+    .maxBy(_.length)
+
   def calcShipRadar(landerState: PreciseState, level: Level): List[ShipRay] = {
 
     val ship = Vec2(landerState.x, landerState.y)
 
     // calculating the lines between ship and every corner of the map and pick the longest.
     // no radar ray needs to be longer
-    val longestRayLength = List(
-      Vec2(0, 0),
-      Vec2(Constants.gameWidth, 0),
-      Vec2(0, Constants.gameHeight),
-      Vec2(Constants.gameWidth, Constants.gameHeight),
-    ).map(corner => Line(ship, corner))
-      .maxBy(_.length)
 
     // create rays in 5° distance
     val rays = 0.until(end = 360, step = 5).map { angleDeg =>
-      val radarRay = Line.apply(ship, ship + Vec2.unit(angleDeg.toRadians) * longestRayLength.length)
-
-      val collisions = level.surfaceLines.flatMap { l =>
-        l.intersect(radarRay) match {
-          case Some(i) if i.onLine1 && i.onLine2 => List(i)
-          case _                                 => List.empty
-        }
-      }
+      val vecToCheck     = Vec2.unit(angleDeg.toRadians) * longestRayToCornerOfMap(ship).length
+      val radarRay: Line = Line.apply(ship, ship + vecToCheck)
+      val collisions     = calcCollisions(level, radarRay)
 
       ShipRay(ship, radarRay, angleDeg - 90, collisions)
 
     }
     rays.toList
   }
+
+  def calcCollisions(level: Level, radarRayFromShip: Line): List[Algorithms.LineIntersection] =
+    level.surfaceLines.flatMap { l =>
+      l.intersect(radarRayFromShip) match {
+        case Some(i) if i.onLine1 && i.onLine2 => List(i)
+        case _                                 => List.empty
+      }
+    }
 
   def calcLandingAreaAccess(landerState: PreciseState, level: Level): List[LandingRadarRay] = {
 
