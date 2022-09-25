@@ -1,20 +1,20 @@
 package webapp
 
 import cats.effect.{IO, SyncIO}
-import colibri.{BehaviorSubject, Observable, Sink, Subject}
+import colibri.{BehaviorSubject, Observable, Subject}
 import com.raquo.domtypes.jsdom.defs.events.TypedTargetMouseEvent
 import io.circe.syntax.EncoderOps
 import io.circe.{Decoder, Encoder}
 import org.scalajs.dom.Element
 import outwatch._
 import outwatch.dsl._
-import webapp.graphics.Rocket
-import webapp.marslander.Game.{GameSettings, GameState}
-import webapp.marslander.{Coord, Level}
 import simulator.Simulator
 import simulator.Simulator.PreciseState.toRoundedState
 import simulator.Simulator._
-import webapp.vectory.{Algorithms, Line, Vec2}
+import webapp.graphics.Rocket
+import webapp.marslander.Game.{GameSettings, GameState}
+import webapp.marslander.{Coord, Level}
+import webapp.vectory.{Algorithms, Vec2}
 
 import scala.collection.immutable.Queue
 
@@ -135,9 +135,7 @@ object Main {
       case None        => IO.pure(None)
     }.map {
       case Some((level, maybeRecorder)) =>
-        VModifier(allHighscores(allLevels).map { highScores =>
-          renderLevel(level, maybeRecorder, selectedLevel, refreshHighscoresSub, uiSettingsSub)
-        })
+        renderLevel(level, maybeRecorder, selectedLevel, refreshHighscoresSub, uiSettingsSub)
 
       case None => VModifier.empty
     }
@@ -187,6 +185,16 @@ object Main {
         ),
       )
     }
+
+  def radarOverviewTable(rays: List[ShipRay]) =
+    table(
+      thead(
+        tr(rays.sortBy(_.angleDeg).map(sr => th(sr.angleDeg))),
+      ),
+      tbody(
+        tr(rays.sortBy(_.angleDeg).map(sr => td(sr.maybeClosestCollisionPointAndDistance.map(_._2.toInt)))),
+      ),
+    )
 
   def renderLevel(
     level: Level,
@@ -268,15 +276,6 @@ object Main {
           }
         }
         .debugLog("Simulation")
-//        .via(simulationState.contramap[(Long, PreciseState, Queue[PreciseState])] { case (_, s, _) =>
-//          if (s.y < 0) {
-//            println("CRASHED")
-//            SimulationState.Crashed
-//          }
-//          else {
-//            SimulationState.AllClear
-//          }
-//        })
 
     div(
       h1(s"Level ${level.name}"),
@@ -297,25 +296,29 @@ object Main {
             idAttr := "gameControl",
             h2("Game Control"),
             div(
-              div(gameState.map { gs =>
-                val gsSpecific = gs match {
-                  case GameState.Paused          =>
-                    button(s"Start", onClick.as(GameState.Running) --> gameState)
-                  case GameState.Running         =>
-                    button(s"Pause", onClick.as(GameState.Paused) --> gameState)
-                  case GameState.Stopped(reason) =>
-                    reason match {
-                      case EvaluationResult.AllClear(_)  => p("this shouldn't happen")
-                      case EvaluationResult.Crashed(_)   => p("Houston, we had a problem...")
-                      case EvaluationResult.OffLimits(_) => p("Off script is ok, but off screen...?")
-                      case EvaluationResult.Landed(_)    => p(fontSize := "2.5rem", "🎉")
-                    }
-                }
-                VModifier(
-                  gsSpecific,
-                  button(s"Restart", onClick.as(Some(level)) --> selectedLevelSub),
-                )
-              }),
+              div(
+                display.flex,
+                flexDirection.row,
+                gameState.map { gs =>
+                  val gsSpecific = gs match {
+                    case GameState.Paused          =>
+                      button(s"Start", onClick.as(GameState.Running) --> gameState)
+                    case GameState.Running         =>
+                      button(s"Pause", onClick.as(GameState.Paused) --> gameState)
+                    case GameState.Stopped(reason) =>
+                      reason match {
+                        case EvaluationResult.AllClear(_)  => p("this shouldn't happen")
+                        case EvaluationResult.Crashed(_)   => p("Houston, we had a problem...")
+                        case EvaluationResult.OffLimits(_) => p("Off script is ok, but off screen...?")
+                        case EvaluationResult.Landed(_)    => p(fontSize := "2.5rem", "🎉")
+                      }
+                  }
+                  VModifier(
+                    button(s"Restart", onClick.as(Some(level)) --> selectedLevelSub),
+                    gsSpecific,
+                  )
+                },
+              ),
               div(
                 VModifier(
                   label(
@@ -355,6 +358,109 @@ object Main {
               )
             },
           )
+          val divLanderState          = div(
+            idAttr := "landerState",
+            h2("Lander State"),
+            div(
+              table(
+                thead(
+                  tr(
+                    th(textAlign.right, "x"),
+                    th(textAlign.right, "y"),
+                    th(textAlign.right, "rotation"),
+                    th(textAlign.right, "power"),
+                    th(textAlign.right, "fuel"),
+                    th(textAlign.right, "hSpeed"),
+                    th(textAlign.right, "vSpeed"),
+                    th(textAlign.right, "suicide burn height at curr vV"),
+                    th(textAlign.right, "closest radar distance"),
+                    th(textAlign.right, "landing radar GO?"),
+                    th(textAlign.right, "horizontal distance to landing area"),
+                    th(textAlign.right, "vertical distance to landing area"),
+                    th(textAlign.right, "distance to landing area"),
+                    th(textAlign.right, "collision distance on current trajectory"),
+                  ),
+                ),
+                tbody(
+                  tr(
+                    td(textAlign.right, width := "10.0%", fontFamily := "monospace", formatNum(roundAt(2)(s.x))),
+                    td(textAlign.right, width := "10.0%", fontFamily := "monospace", formatNum(roundAt(2)(s.y))),
+                    td(
+                      textAlign.right,
+                      width                   := "10%",
+                      fontFamily              := "monospace",
+                      redIfOutOfLimits(s.rotate == 0),
+                      formatNum(roundAt(2)(s.rotate)),
+                    ),
+                    td(textAlign.right, width := "10.0%", fontFamily := "monospace", s.power),
+                    td(textAlign.right, width := "10.0%", fontFamily := "monospace", s.fuel),
+                    td(
+                      textAlign.right,
+                      width                   := "10%",
+                      fontFamily              := "monospace",
+                      redIfOutOfLimits(math.abs(s.hSpeed) < Constants.maxLandingHorizontalSpeed),
+                      formatNum(roundAt(2)(s.hSpeed)),
+                    ),
+                    td(
+                      textAlign.right,
+                      width                   := "10%",
+                      fontFamily              := "monospace",
+                      redIfOutOfLimits(math.abs(s.vSpeed) < Constants.maxLandingVerticalSpeed),
+                      formatNum(roundAt(2)(s.vSpeed)),
+                    ),
+                    td(
+                      textAlign.right,
+                      width                   := "10.0%",
+                      fontFamily              := "monospace",
+                      formatNum(roundAt(2)(calcSuicideBurnHeight(s, level))),
+                    ),
+                    td(
+                      textAlign.right,
+                      width                   := "10.0%",
+                      fontFamily              := "monospace", {
+                        val collidingRays: List[(Algorithms.LineIntersection, Double)] =
+                          radar.flatMap(_.maybeClosestCollisionPointAndDistance)
+                        val closestDistance                                            = collidingRays.map(_._2).minOption
+                        val foo: String                                                = closestDistance.map(d => formatNum(roundAt(2)(d))).getOrElse("---")
+                        foo
+                      },
+                    ),
+                    td(
+                      textAlign.right,
+                      width                   := "10.0%",
+                      fontFamily              := "monospace",
+                      landingRadar.map(_.maybeNearestCollision.isEmpty.toString).mkString("|"),
+                    ),
+                    td(
+                      textAlign.right,
+                      width                   := "10.0%",
+                      fontFamily              := "monospace",
+                      formatNum(roundAt(2)(evaluationResult.enrichedState.horizontalDistanceLandingArea)),
+                    ),
+                    td(
+                      textAlign.right,
+                      width                   := "10.0%",
+                      fontFamily              := "monospace",
+                      formatNum(roundAt(2)(evaluationResult.enrichedState.verticalDistanceLandingArea)),
+                    ),
+                    td(
+                      textAlign.right,
+                      width                   := "10.0%",
+                      fontFamily              := "monospace",
+                      formatNum(roundAt(2)(evaluationResult.enrichedState.distanceLandingArea)),
+                    ),
+                    td(
+                      textAlign.right,
+                      width                   := "10.0%",
+                      fontFamily              := "monospace",
+                      evaluationResult.enrichedState.collisionDistanceOnCurrentTrajectory
+                        .map(n => formatNum(roundAt(2)(n))),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          )
 
           VModifier(
             div(
@@ -365,109 +471,7 @@ object Main {
               divLanderControlDisplay,
               divScore,
             ),
-            div(
-              idAttr                 := "landerState",
-              h2("Lander State"),
-              div(
-                table(
-                  thead(
-                    tr(
-                      th(textAlign.right, "x"),
-                      th(textAlign.right, "y"),
-                      th(textAlign.right, "rotation"),
-                      th(textAlign.right, "power"),
-                      th(textAlign.right, "fuel"),
-                      th(textAlign.right, "hSpeed"),
-                      th(textAlign.right, "vSpeed"),
-                      th(textAlign.right, "suicide burn height at curr vV"),
-                      th(textAlign.right, "closest radar distance"),
-                      th(textAlign.right, "landing radar GO?"),
-                      th(textAlign.right, "horizontal distance to landing area"),
-                      th(textAlign.right, "vertical distance to landing area"),
-                      th(textAlign.right, "distance to landing area"),
-                      th(textAlign.right, "collision distance on current trajectory"),
-                    ),
-                  ),
-                  tbody(
-                    tr(
-                      td(textAlign.right, width := "10.0%", fontFamily := "monospace", formatNum(roundAt(2)(s.x))),
-                      td(textAlign.right, width := "10.0%", fontFamily := "monospace", formatNum(roundAt(2)(s.y))),
-                      td(
-                        textAlign.right,
-                        width                   := "10%",
-                        fontFamily              := "monospace",
-                        redIfOutOfLimits(s.rotate == 0),
-                        formatNum(roundAt(2)(s.rotate)),
-                      ),
-                      td(textAlign.right, width := "10.0%", fontFamily := "monospace", s.power),
-                      td(textAlign.right, width := "10.0%", fontFamily := "monospace", s.fuel),
-                      td(
-                        textAlign.right,
-                        width                   := "10%",
-                        fontFamily              := "monospace",
-                        redIfOutOfLimits(math.abs(s.hSpeed) < Constants.maxLandingHorizontalSpeed),
-                        formatNum(roundAt(2)(s.hSpeed)),
-                      ),
-                      td(
-                        textAlign.right,
-                        width                   := "10%",
-                        fontFamily              := "monospace",
-                        redIfOutOfLimits(math.abs(s.vSpeed) < Constants.maxLandingVerticalSpeed),
-                        formatNum(roundAt(2)(s.vSpeed)),
-                      ),
-                      td(
-                        textAlign.right,
-                        width                   := "10.0%",
-                        fontFamily              := "monospace",
-                        formatNum(roundAt(2)(calcSuicideBurnHeight(s, level))),
-                      ),
-                      td(
-                        textAlign.right,
-                        width                   := "10.0%",
-                        fontFamily              := "monospace", {
-                          val collidingRays: List[(Algorithms.LineIntersection, Double)] =
-                            radar.flatMap(_.maybeClosestCollisionPointAndDistance)
-                          val closestDistance                                            = collidingRays.map(_._2).minOption
-                          val foo: String                                                = closestDistance.map(d => formatNum(roundAt(2)(d))).getOrElse("---")
-                          foo
-                        },
-                      ),
-                      td(
-                        textAlign.right,
-                        width                   := "10.0%",
-                        fontFamily              := "monospace",
-                        landingRadar.map(_.maybeNearestCollision.isEmpty.toString).mkString("|"),
-                      ),
-                      td(
-                        textAlign.right,
-                        width                   := "10.0%",
-                        fontFamily              := "monospace",
-                        formatNum(roundAt(2)(evaluationResult.enrichedState.horizontalDistanceLandingArea)),
-                      ),
-                      td(
-                        textAlign.right,
-                        width                   := "10.0%",
-                        fontFamily              := "monospace",
-                        formatNum(roundAt(2)(evaluationResult.enrichedState.verticalDistanceLandingArea)),
-                      ),
-                      td(
-                        textAlign.right,
-                        width                   := "10.0%",
-                        fontFamily              := "monospace",
-                        formatNum(roundAt(2)(evaluationResult.enrichedState.distanceLandingArea)),
-                      ),
-                      td(
-                        textAlign.right,
-                        width                   := "10.0%",
-                        fontFamily              := "monospace",
-                        evaluationResult.enrichedState.collisionDistanceOnCurrentTrajectory
-                          .map(n => formatNum(roundAt(2)(n))),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
+            divLanderState,
             renderLevelGraphic(
               level,
               s,
@@ -563,10 +567,9 @@ object Main {
   def toCoord(v: Vec2): Coord =
     Coord(PreciseState.myRound(v.x), PreciseState.myRound(v.y))
 
-  def renderVelocityIndicator(landerSettings: PreciseState) = {
+  def renderVelocityIndicator(landerSettings: PreciseState): SvgVNode = {
 
     val v               = Vec2(landerSettings.hSpeed, -landerSettings.vSpeed)
-    val l               = v.length
     val max             = 400
     val maxLength       = max.toString
     val centerIndicator = Vec2(max, max)
@@ -749,171 +752,204 @@ object Main {
     landingRadar: List[LandingRadarRay],
     uiSettings: UISettings,
   ) = {
+
+    val simulationSteps: Observable[List[Coord]] = landerControl
+      .map(s => GameCommand(s.angle, s.thrust))
+      .map(getSimulationStepsBasedOnCurrentGameCommand(level, lander, _))
+
+    val ctrlSub  = Subject.behavior(MouseDragThrustControl(None, None))
+    val debugSub = Subject.behavior("debug")
+
+    val interactionEventHandlers: List[VModifier] = List(
+      onMouseDown.map(getRelativeLocationOfMouseEventInContainer).map { relLocation =>
+        println("onMouseDown")
+        MouseDragThrustControl(Some(relLocation), Some(relLocation))
+      } --> ctrlSub,
+      ctrlSub.map { ctrl =>
+        onMouseMove.map { evt =>
+          println("onMouseMove")
+          if (ctrl.startDragPercent.isEmpty) ctrl
+          else {
+            val relLocation = getRelativeLocationOfMouseEventInContainer(evt)
+            ctrl.copy(dragLocationPercent = Some(relLocation))
+          }
+        } --> ctrlSub
+      },
+      onMouseUp.as(MouseDragThrustControl(None, None)).map { ev =>
+        println("onMouseUp")
+        ev
+      } --> ctrlSub,
+    )
+
+    val highScorePathToVisualize = Option.when(uiSettings.showHighScorePath)(highScorePath)
+
+    val gameGraphic        = svgGameGraphic(
+      level,
+      lander,
+      simulationSteps,
+      previous,
+      highScorePathToVisualize,
+      interactionEventHandlers,
+      radar,
+      landingRadar,
+      showRadar = true,
+    )
+    val interactiveGraphic = gameGraphic(
+      thrustVectoringControl(ctrlSub, landerControl),
+    )
+    div(
+      interactiveGraphic,
+      pre(debugSub),
+    )
+
+  }
+
+  def landerStuff(
+    lander: PreciseState,
+    radar: List[ShipRay],
+    landingRadar: List[LandingRadarRay],
+    showRadar: Boolean,
+  ): List[VModifier] = {
     import svg._
+
+    val landerCoords        = Coord(PreciseState.myRound(lander.x), PreciseState.myRound(lander.y))
+    val landerDisplayCoords = toDisplayCoord(landerCoords)
+
+    List(
+      g(
+        Rocket.rocketWithFlame(lander.power, Vec2(landerDisplayCoords.x, landerDisplayCoords.y), lander.rotate, 200),
+      ),
+      VModifier.ifTrue(showRadar)(
+        g(
+          idAttr := "radarRays",
+          radar.map { ray =>
+            val isColliding = ray.maybeClosestCollisionPointAndDistance.isDefined
+            val end         = ray.maybeClosestCollisionPointAndDistance.map(_._1.pos).getOrElse(ray.ray.end)
+
+            val endCoord =
+              toDisplayCoord(Coord(PreciseState.myRound(end.x), PreciseState.myRound(end.y)))
+            line(
+              stroke        := (if (isColliding) "red" else "green"),
+              strokeWidth   := "2",
+              x1            := landerDisplayCoords.x.toString,
+              y1            := landerDisplayCoords.y.toString,
+              x2            := endCoord.x.toString,
+              y2            := endCoord.y.toString,
+              pointerEvents := "none",
+              title         := s"${ray.angleDeg}°",
+            )
+          },
+        ),
+      ),
+      g(
+        idAttr                                      := "landingRadarRays",
+        landingRadar.map { ray =>
+          val isColliding = ray.maybeNearestCollision.isDefined
+          val end         = ray.landingAreaLocation
+
+          val endCoord =
+            toDisplayCoord(Coord(PreciseState.myRound(end.x), PreciseState.myRound(end.y)))
+          line(
+            stroke        := (if (isColliding) "orangered" else "blueviolet"),
+            strokeWidth   := "8",
+            x1            := landerDisplayCoords.x.toString,
+            y1            := landerDisplayCoords.y.toString,
+            x2            := endCoord.x.toString,
+            y2            := endCoord.y.toString,
+            pointerEvents := "none",
+          )
+        },
+      ),
+      renderVelocityIndicator(lander)(pointerEvents := "none"),
+    )
+  }
+
+  def getSimulationStepsBasedOnCurrentGameCommand(level: Level, lander: PreciseState, ctrl: GameCommand) =
+    Simulator
+      .runUntilCrashed(SimulationStepInput(level, lander, ctrl))
+      .map(toRoundedState)
+      .map(s => toDisplayCoord(Coord(s.x, s.y)))
+
+  def svgGameGraphic(
+    level: Level,
+    lander: PreciseState,
+    simulationSteps: Observable[List[Coord]],
+    previous: Seq[PreciseState],
+    maybeHighScorePath: Option[List[PreciseState]],
+    interactionControls: List[VModifier],
+    radar: List[ShipRay],
+    landingRadar: List[LandingRadarRay],
+    showRadar: Boolean,
+  ) = {
+    import svg._
+
     val allCoords =
       Coord(0, 0) :: level.initialState.surfaceCoords ::: List(Coord(7000, 0))
 
     val displayCoords = allCoords.map(toDisplayCoord)
     val pts           = displayCoords.map { case Coord(x, y) => s"$x, $y" }.mkString(" ")
 
-    def landerStuff(lander: PreciseState) = {
+    val gPredictedPath        = g(
+      idAttr := "predictedPath",
+      simulationSteps.map { steps =>
+        steps.map { case Coord(x, y) =>
+          circle(cx := x.toString, cy := y.toString, r := "10", fill := "black", pointerEvents := "none")
+        }
+      },
+    )
+    val gAlreadyTravelledPath = g(
+      idAttr := "alreadyTravelledPath",
+      previous
+        .map(toRoundedState)
+        .map(s => toDisplayCoord(Coord(s.x, s.y)))
+        .map { case Coord(x, y) =>
+          circle(cx := x.toString, cy := y.toString, r := "10", fill := "lightgreen", pointerEvents := "none")
+        },
+    )
 
-      val landerCoords        = Coord(PreciseState.myRound(lander.x), PreciseState.myRound(lander.y))
-      val landerDisplayCoords = toDisplayCoord(landerCoords)
+    val gPastAndFuturePath = g(
+      idAttr := "pastAndFuturePath",
+      gPredictedPath,
+      gAlreadyTravelledPath,
+    )
 
-      List(
-        g(
-          Rocket.rocketWithFlame(lander.power, Vec2(landerDisplayCoords.x, landerDisplayCoords.y), lander.rotate, 200),
-        ),
-        VModifier.ifTrue(uiSettings.showRadar)(
-          g(
-            idAttr := "radarRays",
-            radar.map { ray =>
-              val isColliding = ray.maybeClosestCollisionPointAndDistance.isDefined
-              val end         = ray.maybeClosestCollisionPointAndDistance.map(_._1.pos).getOrElse(ray.ray.end)
-
-              val endCoord =
-                toDisplayCoord(Coord(PreciseState.myRound(end.x), PreciseState.myRound(end.y)))
-              line(
-                stroke        := (if (isColliding) "red" else "green"),
-                strokeWidth   := "2",
-                x1            := landerDisplayCoords.x.toString,
-                y1            := landerDisplayCoords.y.toString,
-                x2            := endCoord.x.toString,
-                y2            := endCoord.y.toString,
-                pointerEvents := "none",
-                title         := s"${ray.angleDeg}°",
-              )
-            },
-          ),
-        ),
-        g(
-          idAttr                                      := "landingRadarRays",
-          landingRadar.map { ray =>
-            val isColliding = ray.maybeNearestCollision.isDefined
-            val end         = ray.landingAreaLocation
-
-            val endCoord =
-              toDisplayCoord(Coord(PreciseState.myRound(end.x), PreciseState.myRound(end.y)))
-            line(
-              stroke        := (if (isColliding) "orangered" else "blueviolet"),
-              strokeWidth   := "8",
-              x1            := landerDisplayCoords.x.toString,
-              y1            := landerDisplayCoords.y.toString,
-              x2            := endCoord.x.toString,
-              y2            := endCoord.y.toString,
-              pointerEvents := "none",
-            )
+    val gMaybeHighscorePath = maybeHighScorePath.map { highScorePath =>
+      g(
+        idAttr := "highScorePath",
+        highScorePath
+          .map(toRoundedState)
+          .map(s => toDisplayCoord(Coord(s.x, s.y)))
+          .map { case Coord(x, y) =>
+            circle(cx := x.toString, cy := y.toString, r := "5", fill := "darkred", pointerEvents := "none")
           },
-        ),
-        renderVelocityIndicator(lander)(pointerEvents := "none"),
       )
     }
 
-    val simulationSteps =
-      landerControl.map(s => GameCommand(s.angle, s.thrust)).map { ctrl =>
-        Simulator
-          .runUntilCrashed(SimulationStepInput(level, lander, ctrl))
-          .map(toRoundedState)
-          .map(s => toDisplayCoord(Coord(s.x, s.y)))
-      }
-
-    val ctrlSub  = Subject.behavior(MouseDragThrustControl(None, None))
-    val debugSub = Subject.behavior("debug")
-
-    div(
-      svg(
-        width   := canvasSize.x.toInt.toString,                          // "1400",
-        height  := canvasSize.y.toInt.toString,                          // "600",
-        viewBox := s"0 0 ${viewBoxSize.x.toInt} ${viewBoxSize.y.toInt}", // "0 0 7000 3000",
-        rect(
-          x             := "0",
-          y             := "0",
-          width         := viewBoxSize.x.toInt.toString, // "7000",
-          height        := viewBoxSize.y.toInt.toString, // "3000",
-          fill          := "hsla(200,10%,80%,0.9)",
-          pointerEvents := "none",
-        ),
-        polyline(
-          points        := pts,
-          fill          := "red",
-          stroke        := "black",
-          strokeWidth   := "3",
-          pointerEvents := "none",
-        ),
-        g(
-          idAttr        := "currentPath",
-          g(
-            idAttr := "predictedPath",
-            simulationSteps.map { locations =>
-              locations.map { case Coord(x, y) =>
-                circle(cx := x.toString, cy := y.toString, r := "10", fill := "black", pointerEvents := "none")
-              }
-            },
-          ),
-          g(
-            idAttr := "alreadyTravelledPath",
-            previous
-              .map(toRoundedState)
-              .map(s => toDisplayCoord(Coord(s.x, s.y)))
-              .map { case Coord(x, y) =>
-                circle(cx := x.toString, cy := y.toString, r := "10", fill := "lightgreen", pointerEvents := "none")
-              },
-          ),
-        ),
-        VModifier.ifTrue(uiSettings.showHighScorePath)(
-          g(
-            idAttr := "highScorePath",
-            highScorePath
-              .map(toRoundedState)
-              .map(s => toDisplayCoord(Coord(s.x, s.y)))
-              .map { case Coord(x, y) =>
-                circle(cx := x.toString, cy := y.toString, r := "5", fill := "darkred", pointerEvents := "none")
-              },
-          ),
-        ),
-
-        //        rays.map { case ShipRay(surfacePoint, ship, ray, intersections) =>
-//          val start = landerDisplayCoords
-//          val end   = toDisplayCoord(Coord(surfacePoint.x.toInt, surfacePoint.y.toInt))
-//          line(
-//            stroke        := (if (intersections.isEmpty) "green" else "red"),
-//            strokeWidth   := "5",
-//            x1            := start.x.toString,
-//            y1            := start.y.toString,
-//            x2            := end.x.toString,
-//            y2            := end.y.toString,
-//            pointerEvents := "none",
-//          )
-//        },
-        onMouseDown.map(getRelativeLocationOfMouseEventInContainer).map { relLocation =>
-          MouseDragThrustControl(Some(relLocation), Some(relLocation))
-        } --> ctrlSub,
-        ctrlSub.map { ctrl =>
-          onMouseMove.map { evt =>
-            if (ctrl.startDragPercent.isEmpty) ctrl
-            else {
-              val relLocation = getRelativeLocationOfMouseEventInContainer(evt)
-              ctrl.copy(dragLocationPercent = Some(relLocation))
-            }
-          } --> ctrlSub
-        },
-        onMouseUp.as(MouseDragThrustControl(None, None)) --> ctrlSub,
-        thrustVectoringControl(ctrlSub, landerControl),
-        landerStuff(lander),
-
-//    line(
-//      stroke := "green",
-//      strokeWidth := "20",
-//      x1 := start.x,
-//      y1 := start.y,
-//      x2 := end.x,
-//      y2 := end.y
-//    ),
+    svg(
+      width   := canvasSize.x.toInt.toString,                          // "1400",
+      height  := canvasSize.y.toInt.toString,                          // "600",
+      viewBox := s"0 0 ${viewBoxSize.x.toInt} ${viewBoxSize.y.toInt}", // "0 0 7000 3000",
+      rect(
+        x             := "0",
+        y             := "0",
+        width         := viewBoxSize.x.toInt.toString, // "7000",
+        height        := viewBoxSize.y.toInt.toString, // "3000",
+        fill          := "hsla(200,10%,80%,0.9)",
+        pointerEvents := "none",
       ),
-      pre(debugSub),
+      polyline(
+        points        := pts,
+        fill          := "red",
+        stroke        := "black",
+        strokeWidth   := "3",
+        pointerEvents := "none",
+      ),
+      gPastAndFuturePath,
+      gMaybeHighscorePath,
+      interactionControls,
+//      thrustVectoringControl(ctrlSub, landerControl),
+      landerStuff(lander, radar, landingRadar, showRadar),
     )
-
   }
 
   def counter = SyncIO {
