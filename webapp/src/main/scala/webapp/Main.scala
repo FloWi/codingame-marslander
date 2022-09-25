@@ -821,6 +821,57 @@ object Main {
     val ctrlSub  = Subject.behavior(MouseDragThrustControl(None, None))
     val debugSub = Subject.behavior("debug")
 
+    val interactionEventHandlers: List[VModifier] = List(
+      onMouseDown.map(getRelativeLocationOfMouseEventInContainer).map { relLocation =>
+        MouseDragThrustControl(Some(relLocation), Some(relLocation))
+      } --> ctrlSub,
+      ctrlSub.map { ctrl =>
+        onMouseMove.map { evt =>
+          if (ctrl.startDragPercent.isEmpty) ctrl
+          else {
+            val relLocation = getRelativeLocationOfMouseEventInContainer(evt)
+            ctrl.copy(dragLocationPercent = Some(relLocation))
+          }
+        } --> ctrlSub
+      },
+      onMouseUp.as(MouseDragThrustControl(None, None)) --> ctrlSub,
+    )
+
+    val gPredictedPath        = g(
+      idAttr := "predictedPath",
+      simulationSteps.map { locations =>
+        locations.map { case Coord(x, y) =>
+          circle(cx := x.toString, cy := y.toString, r := "10", fill := "black", pointerEvents := "none")
+        }
+      },
+    )
+    val gAlreadyTravelledPath = g(
+      idAttr := "alreadyTravelledPath",
+      previous
+        .map(toRoundedState)
+        .map(s => toDisplayCoord(Coord(s.x, s.y)))
+        .map { case Coord(x, y) =>
+          circle(cx := x.toString, cy := y.toString, r := "10", fill := "lightgreen", pointerEvents := "none")
+        },
+    )
+
+    val gPastAndFuturePath  = g(
+      idAttr := "pastAndFuturePath",
+      gPredictedPath,
+      gAlreadyTravelledPath,
+    )
+    val gMaybeHighscorePath = VModifier.ifTrue(uiSettings.showHighScorePath)(
+      g(
+        idAttr := "highScorePath",
+        highScorePath
+          .map(toRoundedState)
+          .map(s => toDisplayCoord(Coord(s.x, s.y)))
+          .map { case Coord(x, y) =>
+            circle(cx := x.toString, cy := y.toString, r := "5", fill := "darkred", pointerEvents := "none")
+          },
+      ),
+    )
+
     div(
       svg(
         width   := canvasSize.x.toInt.toString,                          // "1400",
@@ -841,75 +892,11 @@ object Main {
           strokeWidth   := "3",
           pointerEvents := "none",
         ),
-        g(
-          idAttr        := "currentPath",
-          g(
-            idAttr := "predictedPath",
-            simulationSteps.map { locations =>
-              locations.map { case Coord(x, y) =>
-                circle(cx := x.toString, cy := y.toString, r := "10", fill := "black", pointerEvents := "none")
-              }
-            },
-          ),
-          g(
-            idAttr := "alreadyTravelledPath",
-            previous
-              .map(toRoundedState)
-              .map(s => toDisplayCoord(Coord(s.x, s.y)))
-              .map { case Coord(x, y) =>
-                circle(cx := x.toString, cy := y.toString, r := "10", fill := "lightgreen", pointerEvents := "none")
-              },
-          ),
-        ),
-        VModifier.ifTrue(uiSettings.showHighScorePath)(
-          g(
-            idAttr := "highScorePath",
-            highScorePath
-              .map(toRoundedState)
-              .map(s => toDisplayCoord(Coord(s.x, s.y)))
-              .map { case Coord(x, y) =>
-                circle(cx := x.toString, cy := y.toString, r := "5", fill := "darkred", pointerEvents := "none")
-              },
-          ),
-        ),
-
-        //        rays.map { case ShipRay(surfacePoint, ship, ray, intersections) =>
-//          val start = landerDisplayCoords
-//          val end   = toDisplayCoord(Coord(surfacePoint.x.toInt, surfacePoint.y.toInt))
-//          line(
-//            stroke        := (if (intersections.isEmpty) "green" else "red"),
-//            strokeWidth   := "5",
-//            x1            := start.x.toString,
-//            y1            := start.y.toString,
-//            x2            := end.x.toString,
-//            y2            := end.y.toString,
-//            pointerEvents := "none",
-//          )
-//        },
-        onMouseDown.map(getRelativeLocationOfMouseEventInContainer).map { relLocation =>
-          MouseDragThrustControl(Some(relLocation), Some(relLocation))
-        } --> ctrlSub,
-        ctrlSub.map { ctrl =>
-          onMouseMove.map { evt =>
-            if (ctrl.startDragPercent.isEmpty) ctrl
-            else {
-              val relLocation = getRelativeLocationOfMouseEventInContainer(evt)
-              ctrl.copy(dragLocationPercent = Some(relLocation))
-            }
-          } --> ctrlSub
-        },
-        onMouseUp.as(MouseDragThrustControl(None, None)) --> ctrlSub,
+        gPastAndFuturePath,
+        gMaybeHighscorePath,
+        interactionEventHandlers,
         thrustVectoringControl(ctrlSub, landerControl),
         landerStuff(lander),
-
-//    line(
-//      stroke := "green",
-//      strokeWidth := "20",
-//      x1 := start.x,
-//      y1 := start.y,
-//      x2 := end.x,
-//      y2 := end.y
-//    ),
       ),
       pre(debugSub),
     )
