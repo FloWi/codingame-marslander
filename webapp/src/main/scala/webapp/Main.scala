@@ -4,13 +4,15 @@ import cats.effect.{IO, SyncIO}
 import colibri.{BehaviorSubject, Observable, Subject}
 import com.raquo.domtypes.jsdom.defs.events.TypedTargetMouseEvent
 import io.circe.syntax.EncoderOps
-import io.circe.{Decoder, Encoder}
 import org.scalajs.dom.Element
 import outwatch._
 import outwatch.dsl._
 import simulator.Simulator
 import simulator.Simulator.PreciseState.toRoundedState
 import simulator.Simulator._
+import webapp.Model.{MouseControlState, UISettings}
+import webapp.graphics.Helper.toDisplayCoord
+import webapp.graphics.LevelRenderer.{canvasSize, renderThrustVectoringControl, svgGameGraphic, viewBoxSize}
 import webapp.graphics.Rocket
 import webapp.marslander.Game.{GameSettings, GameState}
 import webapp.marslander.{Coord, Level}
@@ -559,51 +561,6 @@ object Main {
       color := "red"
     }
 
-  def toDisplayCoord(coord: Coord): Coord =
-    Coord(coord.x, 3000 - coord.y)
-
-  case class MouseControlState(angle: Int, thrust: Int)
-
-  def toCoord(v: Vec2): Coord =
-    Coord(PreciseState.myRound(v.x), PreciseState.myRound(v.y))
-
-  def renderVelocityIndicator(landerSettings: PreciseState): SvgVNode = {
-
-    val v               = Vec2(landerSettings.hSpeed, -landerSettings.vSpeed)
-    val max             = 400
-    val maxLength       = max.toString
-    val centerIndicator = Vec2(max, max)
-    val end             = toCoord(centerIndicator + v)
-
-    import svg._
-    svg(
-      // circle(cx := maxLength, cy := maxLength, r := maxLength, fill := "none", stroke := "black", strokeWidth := "5"),
-      circle(cx := maxLength, cy := maxLength, r := "20", fill := "black"),
-      defs(
-        marker(
-          idAttr       := "arrowhead",
-          markerWidth  := "10",
-          markerHeight := "7",
-          refX         := "0",
-          refY         := "3.5",
-          orient       := "auto",
-          polygon(points := "0 0, 10 3.5, 0 7"),
-        ),
-      ),
-      VModifier.ifTrue(landerSettings.hSpeed != 0 || landerSettings.vSpeed != 0) {
-        line(
-          x1                             := centerIndicator.x.toString,
-          y1                             := centerIndicator.y.toString,
-          x2                             := end.x.toString,
-          y2                             := end.y.toString,
-          stroke                         := "#000",
-          VModifier.attr("stroke-width") := "8",
-          VModifier.attr("marker-end")   := "url(#arrowhead)",
-        )
-      },
-    )
-  }
-
   case class MouseDragThrustControl(startDragPercent: Option[Vec2], dragLocationPercent: Option[Vec2])
 
   def clamp[N: Numeric](x: N, lower: N, upper: N): N = {
@@ -627,8 +584,6 @@ object Main {
 
      */
 
-    import svg._
-
     def toViewBox(c: Vec2): Vec2 =
       Vec2(viewBoxSize.x * c.x, viewBoxSize.y * c.y)
 
@@ -636,101 +591,82 @@ object Main {
       ctrl.startDragPercent.map(toViewBox).zip(ctrl.dragLocationPercent.map(toViewBox)) match {
         case None                   => VModifier.empty
         case Some((start, current)) =>
-          val canvasVector = current - start
+          val maxLength = 400
 
-          val thrustVector = {
-            val isDraggingBelowHorizon = canvasVector.y > 0
+          val ThrustVector(
+            renderLocation,
+            controlSize,
+            length,
+            normalizedThrustVector,
+            mouseControlState,
+          ) = calcThrustVector(start, current, maxLength)
 
-            val y =
-              if (isDraggingBelowHorizon) -1e-10 // mini number, to prevent weird edge case behavior
-              else canvasVector.y
+          ctrlSub.unsafeOnNext(mouseControlState)
 
-            canvasVector.copy(y = y)
-          }
-          val length       = thrustVector.length
-
-          // control is a half circle (upper half)
-          val maxLength   = 400
-          val controlSize = Vec2(2 * maxLength + 10, maxLength + 10)
-
-          val lengthRatio      = length / maxLength
-          val normalized       = clamp(myRound(25)((lengthRatio * 100).toInt), 0, 100) // [0, 25, 50, 75, 100]
-          val normalizedLength = normalized / 100.0 * maxLength
-
-          val thrustAngle    = thrustVector.copy(x = thrustVector.x).angle
-          val thrustAngleDeg = math.round(thrustAngle.toDegrees) // -180 - +180
-          val clampedAngle   = thrustAngleDeg
-
-          val normalizedThrustVector = Vec2.unit(clampedAngle.toRadians) * normalizedLength
-
-//          debugSub.unsafeOnNext(s"""
-//              |val canvasVector           = $canvasVector
-//              |val thrustVector           = $thrustVector
-//              |val length                 = $length
-//              |val maxLength              = $maxLength
-//              |val controlSize            = $controlSize
-//              |val lengthRatio            = $lengthRatio
-//              |val normalized             = $normalized
-//              |val normalizedLength       = $normalizedLength
-//              |val thrustAngle            = $thrustAngle
-//              |val thrustAngleDeg         = $thrustAngleDeg
-//              |val normalizedThrustVector = $normalizedThrustVector
-//              |val clampedAngle           = $clampedAngle
-//              |""".stripMargin.trim)
-
-          ctrlSub.unsafeOnNext(MouseControlState(angle = (-1 * (clampedAngle + 90)).toInt, thrust = normalized / 25))
-
-          svg(
-            x             := (start.x - controlSize.x / 2).toInt.toString,                                 // "0",
-            y             := (start.y - controlSize.y).toInt.toString,                                     // "0",
-            viewBox       := s"-${controlSize.x / 2} -${controlSize.y} ${controlSize.x} ${controlSize.y}", // min-x min-y width height
-            width         := controlSize.x.toString,
-            height        := controlSize.y.toString,
-            pointerEvents := "none",
-
-            // circle(cx := maxLength, cy := maxLength, r := maxLength, fill := "none", stroke := "black", strokeWidth := "5"),
-            circle(
-              cx            := "0",
-              cy            := "0",
-              r             := "40",
-              fill          := "green",
-              pointerEvents := "none",
-            ),
-            circle(
-              cx            := "0",
-              cy            := "0",
-              r             := maxLength.toString,
-              fill          := "none",
-              stroke        := "green",
-              strokeWidth   := "10",
-              pointerEvents := "none",
-            ),
-            defs(
-              marker(
-                idAttr       := "arrowhead",
-                markerWidth  := "10",
-                markerHeight := "7",
-                refX         := "0",
-                refY         := "3.5",
-                orient       := "auto",
-                polygon(points := "0 0, 10 3.5, 0 7"),
-              ),
-            ),
-            VModifier.ifTrue(length >= 10) {
-              line(
-                pointerEvents                  := "none",
-                x1                             := "0",
-                y1                             := "0",
-                x2                             := normalizedThrustVector.x.toString,
-                y2                             := normalizedThrustVector.y.toString,
-                stroke                         := "green",
-                VModifier.attr("stroke-width") := "8",
-                // VModifier.attr("marker-end")   := "url(#arrowhead)",
-              )
-            },
+          renderThrustVectoringControl(
+            renderLocation,
+            controlSize,
+            length,
+            maxLength,
+            normalizedThrustVector,
           )
       }
     }
+  }
+
+  case class ThrustVector(
+    renderLocation: Vec2,
+    controlSize: Vec2,
+    length: Double,
+    normalizedThrustVector: Vec2,
+    mouseControlState: MouseControlState,
+  )
+
+  /** Translates the click-and-drag interaction into a clamped thrustVector
+    */
+  def calcThrustVector(startDragLocation: Vec2, currentDragLocation: Vec2, maxLength: Int): ThrustVector = {
+    val start   = startDragLocation
+    val current = currentDragLocation
+
+    // control is a half circle (upper half)
+    val controlSize = Vec2(2 * maxLength + 10, maxLength + 10)
+
+    val renderLocation: Vec2 = Vec2(
+      start.x - controlSize.x / 2,
+      start.y - controlSize.y,
+    )
+
+    val canvasVector = current - start
+
+    val thrustVector = {
+      val isDraggingBelowHorizon = canvasVector.y > 0
+
+      val y =
+        if (isDraggingBelowHorizon) -1e-10 // mini number, to prevent weird edge case behavior
+        else canvasVector.y
+
+      canvasVector.copy(y = y)
+    }
+    val length       = thrustVector.length
+
+    val lengthRatio      = length / maxLength
+    val normalized       = clamp(myRound(25)((lengthRatio * 100).toInt), 0, 100) // [0, 25, 50, 75, 100]
+    val normalizedLength = normalized / 100.0 * maxLength
+
+    val thrustAngle    = thrustVector.copy(x = thrustVector.x).angle
+    val thrustAngleDeg = math.round(thrustAngle.toDegrees) // -180 - +180
+    val clampedAngle   = thrustAngleDeg
+
+    val normalizedThrustVector = Vec2.unit(thrustAngleDeg.toRadians) * normalizedLength
+    val mouseControl           = MouseControlState(angle = (-1 * (clampedAngle + 90)).toInt, thrust = normalized / 25)
+
+    ThrustVector(
+      renderLocation,
+      controlSize,
+      length,
+      normalizedThrustVector,
+      mouseControl,
+    )
 
   }
 
@@ -738,9 +674,6 @@ object Main {
 
   def myRound(base: Int)(x: Int): Int =
     (base * math.round(x / base.toDouble)).toInt
-
-  val canvasSize: Vec2  = Vec2(1400, 600)
-  val viewBoxSize: Vec2 = Vec2(7000, 3000)
 
   def renderLevelGraphic(
     level: Level,
@@ -751,7 +684,7 @@ object Main {
     radar: List[ShipRay],
     landingRadar: List[LandingRadarRay],
     uiSettings: UISettings,
-  ) = {
+  ): HtmlVNode = {
 
     val simulationSteps: Observable[List[Coord]] = landerControl
       .map(s => GameCommand(s.angle, s.thrust))
@@ -804,177 +737,11 @@ object Main {
 
   }
 
-  def landerStuff(
-    lander: PreciseState,
-    radar: List[ShipRay],
-    landingRadar: List[LandingRadarRay],
-    showRadar: Boolean,
-  ): List[VModifier] = {
-    import svg._
-
-    val landerCoords        = Coord(PreciseState.myRound(lander.x), PreciseState.myRound(lander.y))
-    val landerDisplayCoords = toDisplayCoord(landerCoords)
-
-    List(
-      g(
-        Rocket.rocketWithFlame(lander.power, Vec2(landerDisplayCoords.x, landerDisplayCoords.y), lander.rotate, 200),
-      ),
-      VModifier.ifTrue(showRadar)(
-        g(
-          idAttr := "radarRays",
-          radar.map { ray =>
-            val isColliding = ray.maybeClosestCollisionPointAndDistance.isDefined
-            val end         = ray.maybeClosestCollisionPointAndDistance.map(_._1.pos).getOrElse(ray.ray.end)
-
-            val endCoord =
-              toDisplayCoord(Coord(PreciseState.myRound(end.x), PreciseState.myRound(end.y)))
-            line(
-              stroke        := (if (isColliding) "red" else "green"),
-              strokeWidth   := "2",
-              x1            := landerDisplayCoords.x.toString,
-              y1            := landerDisplayCoords.y.toString,
-              x2            := endCoord.x.toString,
-              y2            := endCoord.y.toString,
-              pointerEvents := "none",
-              title         := s"${ray.angleDeg}°",
-            )
-          },
-        ),
-      ),
-      g(
-        idAttr                                      := "landingRadarRays",
-        landingRadar.map { ray =>
-          val isColliding = ray.maybeNearestCollision.isDefined
-          val end         = ray.landingAreaLocation
-
-          val endCoord =
-            toDisplayCoord(Coord(PreciseState.myRound(end.x), PreciseState.myRound(end.y)))
-          line(
-            stroke        := (if (isColliding) "orangered" else "blueviolet"),
-            strokeWidth   := "8",
-            x1            := landerDisplayCoords.x.toString,
-            y1            := landerDisplayCoords.y.toString,
-            x2            := endCoord.x.toString,
-            y2            := endCoord.y.toString,
-            pointerEvents := "none",
-          )
-        },
-      ),
-      renderVelocityIndicator(lander)(pointerEvents := "none"),
-    )
-  }
-
-  def getSimulationStepsBasedOnCurrentGameCommand(level: Level, lander: PreciseState, ctrl: GameCommand) =
+  def getSimulationStepsBasedOnCurrentGameCommand(level: Level, lander: PreciseState, ctrl: GameCommand): List[Coord] =
     Simulator
       .runUntilCrashed(SimulationStepInput(level, lander, ctrl))
       .map(toRoundedState)
       .map(s => toDisplayCoord(Coord(s.x, s.y)))
-
-  def svgGameGraphic(
-    level: Level,
-    lander: PreciseState,
-    simulationSteps: Observable[List[Coord]],
-    previous: Seq[PreciseState],
-    maybeHighScorePath: Option[List[PreciseState]],
-    interactionControls: List[VModifier],
-    radar: List[ShipRay],
-    landingRadar: List[LandingRadarRay],
-    showRadar: Boolean,
-  ) = {
-    import svg._
-
-    val allCoords =
-      Coord(0, 0) :: level.initialState.surfaceCoords ::: List(Coord(7000, 0))
-
-    val displayCoords = allCoords.map(toDisplayCoord)
-    val pts           = displayCoords.map { case Coord(x, y) => s"$x, $y" }.mkString(" ")
-
-    val gPredictedPath        = g(
-      idAttr := "predictedPath",
-      simulationSteps.map { steps =>
-        steps.map { case Coord(x, y) =>
-          circle(cx := x.toString, cy := y.toString, r := "10", fill := "black", pointerEvents := "none")
-        }
-      },
-    )
-    val gAlreadyTravelledPath = g(
-      idAttr := "alreadyTravelledPath",
-      previous
-        .map(toRoundedState)
-        .map(s => toDisplayCoord(Coord(s.x, s.y)))
-        .map { case Coord(x, y) =>
-          circle(cx := x.toString, cy := y.toString, r := "10", fill := "lightgreen", pointerEvents := "none")
-        },
-    )
-
-    val gPastAndFuturePath = g(
-      idAttr := "pastAndFuturePath",
-      gPredictedPath,
-      gAlreadyTravelledPath,
-    )
-
-    val gMaybeHighscorePath = maybeHighScorePath.map { highScorePath =>
-      g(
-        idAttr := "highScorePath",
-        highScorePath
-          .map(toRoundedState)
-          .map(s => toDisplayCoord(Coord(s.x, s.y)))
-          .map { case Coord(x, y) =>
-            circle(cx := x.toString, cy := y.toString, r := "5", fill := "darkred", pointerEvents := "none")
-          },
-      )
-    }
-
-    svg(
-      width   := canvasSize.x.toInt.toString,                          // "1400",
-      height  := canvasSize.y.toInt.toString,                          // "600",
-      viewBox := s"0 0 ${viewBoxSize.x.toInt} ${viewBoxSize.y.toInt}", // "0 0 7000 3000",
-      rect(
-        x             := "0",
-        y             := "0",
-        width         := viewBoxSize.x.toInt.toString, // "7000",
-        height        := viewBoxSize.y.toInt.toString, // "3000",
-        fill          := "hsla(200,10%,80%,0.9)",
-        pointerEvents := "none",
-      ),
-      polyline(
-        points        := pts,
-        fill          := "red",
-        stroke        := "black",
-        strokeWidth   := "3",
-        pointerEvents := "none",
-      ),
-      gPastAndFuturePath,
-      gMaybeHighscorePath,
-      interactionControls,
-//      thrustVectoringControl(ctrlSub, landerControl),
-      landerStuff(lander, radar, landingRadar, showRadar),
-    )
-  }
-
-  def counter = SyncIO {
-    // https://outwatch.github.io/docs/readme.html#example-counter
-    val number = Subject.behavior(0)
-    div(
-      button("+", onClick(number.map(_ + 1)) --> number, marginRight := "10px"),
-      number,
-    )
-  }
-
-  def inputField = SyncIO {
-    // https://outwatch.github.io/docs/readme.html#example-input-field
-    val text = Subject.behavior("")
-    div(
-      input(
-        tpe := "text",
-        value <-- text,
-        onInput.value --> text,
-      ),
-      button("clear", onClick.as("") --> text),
-      div("text: ", text),
-      div("length: ", text.map(_.length)),
-    )
-  }
 
   def getRelativeLocationOfMouseEventInContainer(evt: TypedTargetMouseEvent[Element]): Vec2 = {
     val e    = evt.target
@@ -1010,17 +777,6 @@ relY: $relY
   }
 
 }
-
-object Foo {}
-
-object UISettings {
-  val default: UISettings = UISettings(showRadar = false, showHighScorePath = true)
-
-  implicit val landerInitialStateDecoder: Decoder[UISettings] = io.circe.generic.semiauto.deriveDecoder
-  implicit val landerInitialStateEncoder: Encoder[UISettings] = io.circe.generic.semiauto.deriveEncoder
-
-}
-case class UISettings(showRadar: Boolean, showHighScorePath: Boolean)
 
 /*
 
