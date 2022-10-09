@@ -15,6 +15,7 @@ class MarsLanderGymEnv(gym.Env):
         super(MarsLanderGymEnv, self).__init__()
 
         self.landing_coords = []
+        self.states = []
         self.level_name = None
         self.num_landing_coords = None
         self.proc = None
@@ -58,12 +59,13 @@ class MarsLanderGymEnv(gym.Env):
             state_str = self.proc.stdout.readline()
             # print(f'state_str trimmed: {state_str[0: 80]}')
             new_state = json.loads(state_str)
+            self.states.append(new_state)
             reward = 1000 - new_state['fuel']
 
             if self.done:
                 reward = - 10
 
-            info = {}
+            info = self.create_info()
 
             if self.is_done(new_state):
                 self.done = True
@@ -106,11 +108,13 @@ class MarsLanderGymEnv(gym.Env):
             self.landing_coords.append(self.proc.stdout.readline())
 
         initial_state = json.loads(self.proc.stdout.readline())
+        self.states = [initial_state]
 
         # create observation:
         observation = self.create_observation(initial_state)
+        info = self.create_info()
 
-        return observation, {}  # reward, done, info can't be included
+        return observation, info  # reward, done, info can't be included
 
     def render(self, mode='human'):
         ...
@@ -132,6 +136,13 @@ class MarsLanderGymEnv(gym.Env):
             # state.verticalDistanceLandingArea,
             # state.distanceLandingArea,
         ])
+
+    def create_info(self):
+        return {
+            "level_name": self.level_name,
+            "landing_coords": self.landing_coords,
+            "state": self.states[-1]
+        }
 
     @staticmethod
     def is_done(state):
