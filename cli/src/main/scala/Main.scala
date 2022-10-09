@@ -14,10 +14,6 @@ import scala.util.Try
 object Main extends IOApp {
 
   override def run(args: List[String]): IO[ExitCode] =
-    //  val allLevels =
-    //    asJson[List[Level]]
-    //
-
     repl.foreverM
 
   def printLevelInfo(level: Level): IO[Unit] =
@@ -42,7 +38,7 @@ object Main extends IOApp {
     randomLevel <- Random[IO](random).shuffleList(allLevels).map(_.head) // let it crash
   } yield randomLevel
 
-  def repl = askSeed.flatMap(getRandomLevel).flatMap(levelRepl)
+  def repl: IO[EvaluationResult] = askSeed.flatMap(getRandomLevel).flatMap(levelRepl)
 
   def levelRepl(level: Level): IO[EvaluationResult] = {
     val initialState = PreciseState(
@@ -67,21 +63,15 @@ object Main extends IOApp {
     step(level, preciseState).flatMap { either =>
       either match {
         case Right(state)         => loop(level, state)
-        case Left((evRes, state)) => printState(state, evRes) *> IO.pure(evRes) // never pollute stdout with infos
-//          evRes match {
-//            case _: EvaluationResult.Landed    => printState(state, evRes) *> IO.pure(evRes)
-//            case _: EvaluationResult.Crashed   => Console[IO].println("Crashed") *> IO.pure(evRes)
-//            case _: EvaluationResult.OffLimits => Console[IO].println("OffLimits") *> IO.pure(evRes)
-//          case EvaluationResult.AllClear(enrichedState) => ???
-//          }
+        case Left((evRes, state)) =>
+          printState(level, state, evRes) *> IO.pure(evRes) // never pollute stdout with infos
       }
-
     }
 
   def step(level: Level, oldState: PreciseState): IO[Either[(EvaluationResult, PreciseState), PreciseState]] =
     for {
       currentResult <- IO.pure(oldState.evaluate(level, None))
-      _             <- printState(oldState, currentResult)
+      _             <- printState(level, oldState, currentResult)
       cmdStr        <- askUser
       cmd           <- IO.fromTry(Try(GameCommand.parse(cmdStr)))
       newState       = Simulator.simulate(SimulationStepInput(level, oldState, cmd))
@@ -91,7 +81,7 @@ object Main extends IOApp {
       case res                          => Left((res, newState))
     }
 
-  def printState(preciseState: PreciseState, evaluationResult: EvaluationResult): IO[Unit] =
+  def printState(level: Level, preciseState: PreciseState, evaluationResult: EvaluationResult): IO[Unit] =
     Console[IO].println(s"${evaluationResult.enrichedState.flattened.asJson.noSpacesSortKeys}")
 
   val readline =

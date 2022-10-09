@@ -11,6 +11,7 @@ val versions = new {
   val circeVersion       = "0.14.1"
   val sttpClient3Version = "3.6.2"
   val catsEffectVersion  = "3.3.12"
+  val jsdomVersion       = "13.2.0"
 }
 
 lazy val scalaJsMacrotaskExecutor = Seq(
@@ -46,6 +47,21 @@ lazy val bot = project
     ),
   )
 
+lazy val renderer = project
+  .in(file("renderer"))
+  .enablePlugins(
+    ScalaJSPlugin,
+  )
+  .dependsOn(simulator)
+  .settings(
+    libraryDependencies ++= Seq(
+      "io.github.outwatch" %%% "outwatch" % versions.outwatch,
+    ),
+    scalacOptions --= Seq(
+      "-Xfatal-warnings",
+    ), // overwrite option from https://github.com/DavidGregory084/sbt-tpolecat
+  )
+
 lazy val cli = project
   .in(file("cli"))
   .enablePlugins(
@@ -53,11 +69,12 @@ lazy val cli = project
     ScalaJSBundlerPlugin,
     ScalablyTypedConverterPlugin,
   )
-  .dependsOn(simulator)
+  .dependsOn(simulator, renderer)
   .settings(
-//    Compile / npmDevDependencies   ++= Seq(
-//      "@fun-stack/fun-pack" -> versions.funPack, // sane defaults for webpack development and production, see webpack.config.*.js
-//    ),
+    libraryDependencies            ++= Seq(
+      "io.github.outwatch" %%% "outwatch"    % versions.outwatch,
+      "org.scala-js"       %%% "scalajs-dom" % "2.2.0",
+    ),
     scalacOptions --= Seq(
       "-Xfatal-warnings",
     ), // overwrite option from https://github.com/DavidGregory084/sbt-tpolecat
@@ -66,7 +83,11 @@ lazy val cli = project
     webpackConfigFile               := Some(baseDirectory.value / "webpack.config.js"),
     Compile / npmDependencies      ++= Seq(
       "@types/node" -> "16.11.7",
+//      "jsdom"       -> versions.jsdomVersion,
+//      "snabbdom"    -> "github:outwatch/snabbdom.git#semver:0.7.5",
+//      "canvas"      -> "2.10.1",
     ),
+//    stIgnore                       ++= List("jsdom", "snabbdom", "canvas"),
   )
 
 lazy val webapp = project
@@ -75,7 +96,7 @@ lazy val webapp = project
     ScalaJSPlugin,
     ScalaJSBundlerPlugin,
   )
-  .dependsOn(simulator)
+  .dependsOn(simulator, renderer)
   .settings(scalaJsMacrotaskExecutor)
   .settings(
     libraryDependencies          ++= Seq(
