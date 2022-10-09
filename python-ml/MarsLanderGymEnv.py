@@ -53,10 +53,10 @@ class MarsLanderGymEnv(gym.Env):
             # print("sending command")
             command = f"{action['rotation']} {action['power']}"
             self.proc.stdin.writelines([f"{command}\n"])
-            print(f'command "{command}" sent')
+            # print(f'command "{command}" sent')
 
             state_str = self.proc.stdout.readline()
-            print(f'state_str trimmed: {state_str[0: 80]}')
+            # print(f'state_str trimmed: {state_str[0: 80]}')
             new_state = json.loads(state_str)
             reward = 1000 - new_state['fuel']
 
