@@ -5,12 +5,12 @@ ThisBuild / version      := "0.1.0-SNAPSHOT"
 ThisBuild / scalaVersion := "2.13.8"
 
 val versions = new {
-  val outwatch           = "1.0.0-RC7"
+  val outwatch           = "1.0.0-RC10"
   val funPack            = "0.2.0"
-  val scalaTest          = "3.2.12"
-  val circeVersion       = "0.14.1"
-  val sttpClient3Version = "3.6.2"
-  val catsEffectVersion  = "3.3.12"
+  val scalaTest          = "3.2.14"
+  val circeVersion       = "0.14.3"
+  val sttpClient3Version = "3.8.3"
+  val catsEffectVersion  = "3.4-148221d"
   val jsdomVersion       = "13.2.0"
 }
 
@@ -62,6 +62,12 @@ lazy val renderer = project
     ), // overwrite option from https://github.com/DavidGregory084/sbt-tpolecat
   )
 
+lazy val scalaJsBundlerSettings = Seq(
+  webpack / version := "4.46.0",
+  useYarn           := true,
+  /* yarnExtraArgs     += "--frozen-lockfile", */
+)
+
 lazy val cli = project
   .in(file("cli"))
   .enablePlugins(
@@ -70,6 +76,7 @@ lazy val cli = project
     ScalablyTypedConverterPlugin,
   )
   .dependsOn(simulator, renderer)
+  .settings(scalaJsBundlerSettings)
   .settings(
     libraryDependencies            ++= Seq(
       "io.github.outwatch" %%% "outwatch"    % versions.outwatch,
@@ -78,17 +85,18 @@ lazy val cli = project
     scalacOptions --= Seq(
       "-Xfatal-warnings",
     ), // overwrite option from https://github.com/DavidGregory084/sbt-tpolecat
-    useYarn                         := true, // Makes scalajs-bundler use yarn instead of npm
     scalaJSUseMainModuleInitializer := true,
     webpackConfigFile               := Some(baseDirectory.value / "webpack.config.js"),
     Compile / npmDependencies      ++= Seq(
       "@types/node" -> "16.11.7",
-//      "jsdom"       -> versions.jsdomVersion,
-//      "snabbdom"    -> "github:outwatch/snabbdom.git#semver:0.7.5",
-//      "canvas"      -> "2.10.1",
     ),
-//    stIgnore                       ++= List("jsdom", "snabbdom", "canvas"),
   )
+
+def readJsDependencies(baseDirectory: File, field: String): Seq[(String, String)] = {
+  val packageJson = ujson.read(IO.read(new File(s"$baseDirectory/package.json")))
+  packageJson(field).obj.mapValues(_.str.toString).toSeq
+}
+
 
 lazy val webapp = project
   .in(file("webapp"))
@@ -107,9 +115,8 @@ lazy val webapp = project
       "com.softwaremill.sttp.client3" %%% "circe"         % versions.sttpClient3Version,
       "com.softwaremill.sttp.client3" %%% "cats"          % versions.sttpClient3Version,
     ),
-    Compile / npmDevDependencies ++= Seq(
-      "@fun-stack/fun-pack" -> versions.funPack, // sane defaults for webpack development and production, see webpack.config.*.js
-    ),
+    Compile / npmDependencies ++= readJsDependencies(baseDirectory.value, "dependencies"),
+    Compile / npmDevDependencies   ++= readJsDependencies(baseDirectory.value, "devDependencies"),
     scalacOptions --= Seq(
       "-Xfatal-warnings",
     ), // overwrite option from https://github.com/DavidGregory084/sbt-tpolecat

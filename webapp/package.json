@@ -1,0 +1,9 @@
+{
+  "license": "UNLICENSED",
+  "dependencies": {
+  },
+  "devDependencies": {
+    "@fun-stack/fun-pack": "0.2.6",
+    "tailwindcss": "^3.0.10"
+  }
+}

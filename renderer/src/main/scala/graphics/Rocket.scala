@@ -32,7 +32,7 @@ rocket4 width: 630
   val rocketHeight          = 609
   val rocketHeightWithFlame = 950
 
-  def rocketWithFlame(thrust: Int, location: Vec2, rotation: Int, expectedRocketHeight: Int): SvgVNode = {
+  def rocketWithFlame(thrust: Int, location: Vec2, rotation: Int, expectedRocketHeight: Int): VNode = {
     val flame = thrust match {
       case 1 => Assets.flame1
       case 2 => Assets.flame2

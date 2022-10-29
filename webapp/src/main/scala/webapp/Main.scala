@@ -97,7 +97,7 @@ object Main {
     )
   }
 
-  def renderUi(allLevels: List[Level], uiSettings: UISettings): HtmlVNode = {
+  def renderUi(allLevels: List[Level], uiSettings: UISettings): VNode = {
     val selectedLevel = Subject.behavior(allLevels.lastOption)
 
     val uiSettingsSub: BehaviorSubject[UISettings] = Subject.behavior(uiSettings)
@@ -684,7 +684,7 @@ object Main {
     radar: List[ShipRay],
     landingRadar: List[LandingRadarRay],
     uiSettings: UISettings,
-  ): HtmlVNode = {
+  ): VNode = {
 
     val simulationSteps: Observable[List[Coord]] = landerControl
       .map(s => GameCommand(s.angle, s.thrust))

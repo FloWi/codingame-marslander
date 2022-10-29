@@ -24,7 +24,7 @@ object LevelRenderer {
     radar: List[ShipRay],
     landingRadar: List[LandingRadarRay],
     showRadar: Boolean,
-  ): SvgVNode = {
+  ): VNode = {
     import svg._
 
     val allCoords =
@@ -156,7 +156,7 @@ object LevelRenderer {
     )
   }
 
-  def renderVelocityIndicator(landerSettings: PreciseState): SvgVNode = {
+  def renderVelocityIndicator(landerSettings: PreciseState): VNode = {
 
     val v               = Vec2(landerSettings.hSpeed, -landerSettings.vSpeed)
     val max             = 400
@@ -199,7 +199,7 @@ object LevelRenderer {
     length: Double,
     maxLength: Int,
     normalizedThrustVector: Vec2,
-  ): SvgVNode = {
+  ): VNode = {
     import svg._
 
     svg(
