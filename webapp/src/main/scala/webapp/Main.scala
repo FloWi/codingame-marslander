@@ -729,10 +729,14 @@ object Main {
 
     val ctrlSub = Subject.behavior(MouseDragThrustControl(None, None))
 
-    val debugSub = Subject.behavior(
+    val tensor    = toTensor(lander)
+    val tensorStr = tensor.toString(verbose = true)
+    tensor.dispose()
+    val debugSub  = Subject.behavior(
       s"""
         |tf version: ${typings.tensorflowTfjs.versionMod.version}
         |tf backend: ${typings.tensorflowTfjs.mod.getBackend()}
+        |example tensor: ${tensorStr}
         |""".stripMargin.trim,
     )
 
