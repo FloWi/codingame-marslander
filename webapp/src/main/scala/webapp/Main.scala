@@ -727,8 +727,14 @@ object Main {
       .map(s => GameCommand(s.angle, s.thrust))
       .map(getSimulationStepsBasedOnCurrentGameCommand(level, lander, _))
 
-    val ctrlSub  = Subject.behavior(MouseDragThrustControl(None, None))
-    val debugSub = Subject.behavior("debug")
+    val ctrlSub = Subject.behavior(MouseDragThrustControl(None, None))
+
+    val debugSub = Subject.behavior(
+      s"""
+        |tf version: ${typings.tensorflowTfjs.versionMod.version}
+        |tf backend: ${typings.tensorflowTfjs.mod.getBackend()}
+        |""".stripMargin.trim,
+    )
 
     val interactionEventHandlers: List[VModifier] = List(
       onMouseDown.map(getRelativeLocationOfMouseEventInContainer).map { relLocation =>
