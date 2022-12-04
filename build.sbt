@@ -97,12 +97,12 @@ def readJsDependencies(baseDirectory: File, field: String): Seq[(String, String)
   packageJson(field).obj.mapValues(_.str.toString).toSeq
 }
 
-
 lazy val webapp = project
   .in(file("webapp"))
   .enablePlugins(
     ScalaJSPlugin,
     ScalaJSBundlerPlugin,
+    ScalablyTypedConverterPlugin,
   )
   .dependsOn(simulator, renderer)
   .settings(scalaJsMacrotaskExecutor)
@@ -115,8 +115,10 @@ lazy val webapp = project
       "com.softwaremill.sttp.client3" %%% "circe"         % versions.sttpClient3Version,
       "com.softwaremill.sttp.client3" %%% "cats"          % versions.sttpClient3Version,
     ),
-    Compile / npmDependencies ++= readJsDependencies(baseDirectory.value, "dependencies"),
-    Compile / npmDevDependencies   ++= readJsDependencies(baseDirectory.value, "devDependencies"),
+    Compile / npmDependencies    ++= readJsDependencies(baseDirectory.value, "dependencies") ++ Seq(
+      "snabbdom" -> "github:outwatch/snabbdom.git#semver:0.7.5", // for outwatch, workaround for: https://github.com/ScalablyTyped/Converter/issues/293
+    ),
+    Compile / npmDevDependencies ++= readJsDependencies(baseDirectory.value, "devDependencies"),
     scalacOptions --= Seq(
       "-Xfatal-warnings",
     ), // overwrite option from https://github.com/DavidGregory084/sbt-tpolecat
@@ -136,6 +138,11 @@ lazy val webapp = project
     fastOptJS / webpackConfigFile := Some(baseDirectory.value / "webpack.config.dev.js"),
     fullOptJS / webpackConfigFile := Some(baseDirectory.value / "webpack.config.prod.js"),
     Test / requireJsDomEnv        := true,
+    stIgnore                     ++= List(
+      "setimmediate",
+      "snabbdom",
+      "daisyui",
+    ),
   )
 
 addCommandAlias("prod", "fullOptJS/webpack")

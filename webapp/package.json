@@ -1,6 +1,7 @@
 {
   "license": "UNLICENSED",
   "dependencies": {
+    "@tensorflow/tfjs": "^4.1.0"
   },
   "devDependencies": {
     "@fun-stack/fun-pack": "0.2.6",

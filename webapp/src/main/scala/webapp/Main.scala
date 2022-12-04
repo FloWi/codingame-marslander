@@ -4,7 +4,7 @@ import cats.effect.{IO, SyncIO}
 import colibri.{BehaviorSubject, Observable, Subject}
 import com.raquo.domtypes.jsdom.defs.events.TypedTargetMouseEvent
 import io.circe.syntax.EncoderOps
-import org.scalajs.dom.Element
+import org.scalajs.dom.{console, Element}
 import outwatch._
 import outwatch.dsl._
 import simulator.Simulator
@@ -17,8 +17,13 @@ import webapp.graphics.Rocket
 import webapp.marslander.Game.{GameSettings, GameState}
 import webapp.marslander.{Coord, Level}
 import webapp.vectory.{Algorithms, Vec2}
+import typings.tensorflowTfjs.{mod => tf}
+import typings.tensorflowTfjsCore.distTensorMod.{Tensor1D, Tensor2D}
+import typings.tensorflowTfjsCore.distTypesMod.{TensorLike, TensorLike1D, TensorLike2D}
 
 import scala.collection.immutable.Queue
+import scala.scalajs.js
+import scala.scalajs.js.JSConverters.JSRichIterableOnce
 
 // Outwatch documentation:
 // https://outwatch.github.io/docs/readme.html
@@ -33,6 +38,10 @@ object Main {
     div(
       for {
         allLevels  <- Communication.getLevels
+        _          <- IO(println("waiting for tensorflow to be ready..."))
+        _          <- IO.fromPromise(IO(tf.ready()))
+        _          <- IO(println(s"tf version: ${typings.tensorflowTfjs.versionMod.version}"))
+        _          <- IO(println(s"tf backend: ${typings.tensorflowTfjs.mod.getBackend()}"))
         uiSettings <- loadUiSettings
       } yield renderUi(allLevels, uiSettings),
     )
@@ -198,6 +207,19 @@ object Main {
       ),
     )
 
+  def toTensor(preciseState: PreciseState): Tensor1D = {
+    val state: Vector[Double] = Vector(
+      preciseState.x,
+      preciseState.y,
+      preciseState.hSpeed,
+      preciseState.vSpeed,
+      preciseState.fuel,
+      preciseState.rotate,
+      preciseState.power,
+    )
+    tf.tensor1d(js.Array.from(state.toJSArray).asInstanceOf[TensorLike1D])
+  }
+
   def renderLevel(
     level: Level,
     maybeRecorder: Option[FlightRecoder],
@@ -255,6 +277,22 @@ object Main {
         }
         .map { case msg @ (_, current, previous) =>
           msg -> current.evaluate(level, previous.lastOption.map(_._1))
+        }
+        .map { msg =>
+          val tensor = toTensor(msg._1._2)
+
+          console.log("1st tensor", tensor.toString(verbose = true))
+          tensor.dispose() // cleanup in non gc environment like webgl
+          /*
+          alternative:
+          const y = tf.tidy(() => {
+            const result = a.square().log().neg();
+            return result;
+          });
+           */
+
+          msg
+
         }
         .map { case msg @ ((_, current, previous), result) =>
           result match {
@@ -667,7 +705,6 @@ object Main {
       normalizedThrustVector,
       mouseControl,
     )
-
   }
 
   def roundAt(p: Int)(n: Double): Double = { val s = math pow (10, p); (math round n * s) / s }
@@ -700,7 +737,7 @@ object Main {
       } --> ctrlSub,
       ctrlSub.map { ctrl =>
         onMouseMove.map { evt =>
-          println("onMouseMove")
+          // println("onMouseMove")
           if (ctrl.startDragPercent.isEmpty) ctrl
           else {
             val relLocation = getRelativeLocationOfMouseEventInContainer(evt)
@@ -709,7 +746,7 @@ object Main {
         } --> ctrlSub
       },
       onMouseUp.as(MouseDragThrustControl(None, None)).map { ev =>
-        println("onMouseUp")
+        // println("onMouseUp")
         ev
       } --> ctrlSub,
     )
